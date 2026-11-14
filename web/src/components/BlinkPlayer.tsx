@@ -1,5 +1,5 @@
 import { type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, Crosshair, Download, LineChart, Loader2, Pause, Play } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, Crosshair, Download, LineChart, Loader2, Pause, Play } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -24,7 +24,7 @@ import { LightCurvePanel } from '@/components/LightCurvePanel'
 import { SpectrumPanel } from '@/components/SpectrumPanel'
 import type { Pick } from '@/lib/spectrum'
 import type { Frame, SpectrumData, TargetData } from '@/lib/types'
-import type { DisplayState } from '@/lib/url'
+import { DEFAULT_DISPLAY, type DisplayState } from '@/lib/url'
 import { cn } from '@/lib/utils'
 
 /** CSS pixels per sky pixel at full size (25 px grid → 500 px canvas). */
@@ -278,6 +278,8 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
   const [playing, setPlaying] = useState(nEpochs > 1)
   const [fps, setFps] = useState(1.5)
   const [showMarker, setShowMarker] = useState(true)
+  // "More controls" starts open when the link asks for a non-default detector or stretch
+  const [showMore, setShowMore] = useState(() => display.det !== DEFAULT_DISPLAY.det || display.stretch !== DEFAULT_DISPLAY.stretch)
   const [pick, setPick] = useState<Pick | null>(null)
   const [loaded, setLoaded] = useState<SpectrumData | null | 'loading' | 'error'>(null)
   // light curve: open by default for variable stars, on request for anything else
@@ -437,7 +439,7 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
       {/* canvas, with the aside next to it at the same size on wide screens */}
       <div className={cn(aside && 'grid grid-cols-1 gap-4 xl:grid-cols-2 xl:items-start')}>
       <div className="mx-auto w-full" style={{ maxWidth: full }}>
-        <div className="relative">
+        <div className="relative" data-tour="image">
           <canvas
             ref={canvasRef}
             className="block aspect-square w-full rounded-md border border-border bg-black"
@@ -459,7 +461,7 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
         </div>
 
         {/* epoch timeline */}
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex items-center gap-2" data-tour="epochs">
           <Button
             variant="outline"
             size="icon"
@@ -567,6 +569,74 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
       {/* controls */}
       {!embed && (
         <>
+        <div className="flex flex-col gap-2" data-tour="view">
+          <Label>View</Label>
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            value={mode}
+            onValueChange={(v) => v && setMode(v as ViewMode)}
+            className="w-full"
+          >
+            <ToggleGroupItem value="blink" className="flex-1">
+              Blink
+            </ToggleGroupItem>
+            <ToggleGroupItem value="diff" className="flex-1">
+              Difference
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+
+
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+          <label className="flex cursor-pointer items-center gap-2">
+            <Switch checked={showMarker} onCheckedChange={setShowMarker} />
+            <Crosshair className="size-4" style={{ color: MARKER_COLOR }} />
+            Predicted position
+          </label>
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <span className="inline-block size-3 rounded-sm border border-border" style={{ background: rgb(NO_DATA_RGB) }} />
+            No data
+          </span>
+          {present.has(1) && (
+            <span className="flex items-center gap-2 text-muted-foreground">
+              <span
+                className="inline-block size-3 rounded-sm border border-border"
+                style={{
+                  background: `repeating-linear-gradient(-45deg, ${SATURATED_HATCH} 0 1.5px, ${rgb(SATURATED_RGB)} 1.5px 4px)`,
+                }}
+              />
+              Saturated
+            </span>
+          )}
+          {present.has(2) && (
+            <span className="flex items-center gap-2 text-muted-foreground">
+              <span className="inline-block size-3 rounded-sm border border-border" style={{ background: rgb(FLAGGED_RGB) }} />
+              Flagged{frame?.flags ? ` (${Object.keys(frame.flags).join(', ')})` : ''}
+            </span>
+          )}
+          {mode === 'diff' && (
+            <span className="flex items-center gap-2 text-muted-foreground">
+              <span className="inline-block h-3 w-16 rounded-sm bg-gradient-to-r from-[rgb(60,150,255)] via-black to-[rgb(255,190,60)]" />
+              fainter · brighter than the median
+            </span>
+          )}
+        </div>
+
+        {/* detector, stretch, speed and the per-epoch numbers: there for the curious, folded away
+            by default so the first screen is the image, the dates and Blink / Difference */}
+        <button
+          type="button"
+          onClick={() => setShowMore((v) => !v)}
+          aria-expanded={showMore}
+          className="flex cursor-pointer items-center gap-1 self-start text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ChevronDown className={cn('size-4 transition-transform', showMore && 'rotate-180')} />
+          More controls
+          <span className="text-xs">· wavelength, stretch, speed</span>
+        </button>
+        {showMore && (
+        <>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="flex flex-col gap-2">
             <Label htmlFor="detector">Detector / wavelength</Label>
@@ -587,24 +657,6 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
                 {display.det} has no data here{data.target.kind === 'custom' ? ' yet' : ''}; showing {frameKey}.
               </p>
             )}
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <Label>View</Label>
-            <ToggleGroup
-              type="single"
-              variant="outline"
-              value={mode}
-              onValueChange={(v) => v && setMode(v as ViewMode)}
-              className="w-full"
-            >
-              <ToggleGroupItem value="blink" className="flex-1">
-                Blink
-              </ToggleGroupItem>
-              <ToggleGroupItem value="diff" className="flex-1">
-                Difference
-              </ToggleGroupItem>
-            </ToggleGroup>
           </div>
 
           <div className="flex flex-col gap-2">
@@ -643,41 +695,6 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-          <label className="flex cursor-pointer items-center gap-2">
-            <Switch checked={showMarker} onCheckedChange={setShowMarker} />
-            <Crosshair className="size-4" style={{ color: MARKER_COLOR }} />
-            Predicted position
-          </label>
-          <span className="flex items-center gap-2 text-muted-foreground">
-            <span className="inline-block size-3 rounded-sm border border-border" style={{ background: rgb(NO_DATA_RGB) }} />
-            No data
-          </span>
-          {present.has(1) && (
-            <span className="flex items-center gap-2 text-muted-foreground">
-              <span
-                className="inline-block size-3 rounded-sm border border-border"
-                style={{
-                  background: `repeating-linear-gradient(-45deg, ${SATURATED_HATCH} 0 1.5px, ${rgb(SATURATED_RGB)} 1.5px 4px)`,
-                }}
-              />
-              Saturated
-            </span>
-          )}
-          {present.has(2) && (
-            <span className="flex items-center gap-2 text-muted-foreground">
-              <span className="inline-block size-3 rounded-sm border border-border" style={{ background: rgb(FLAGGED_RGB) }} />
-              Flagged{frame?.flags ? ` (${Object.keys(frame.flags).join(', ')})` : ''}
-            </span>
-          )}
-          {mode === 'diff' && (
-            <span className="flex items-center gap-2 text-muted-foreground">
-              <span className="inline-block h-3 w-16 rounded-sm bg-gradient-to-r from-[rgb(60,150,255)] via-black to-[rgb(255,190,60)]" />
-              fainter · brighter than the median
-            </span>
-          )}
-        </div>
-
         {/* epoch facts */}
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-md bg-muted/40 p-3 font-mono text-xs sm:grid-cols-4">
           <div>
@@ -711,6 +728,8 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
           Keyboard: <kbd className="rounded border px-1">Space</kbd> play/pause,{' '}
           <kbd className="rounded border px-1">←</kbd> <kbd className="rounded border px-1">→</kbd> step epochs.
         </p>
+        </>
+        )}
         </>
       )}
     </div>

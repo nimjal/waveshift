@@ -5,7 +5,7 @@ import { Popover } from 'radix-ui'
 import { BlinkPlayer } from '@/components/BlinkPlayer'
 import { SkyContextPanel } from '@/components/SkyContextPanel'
 import { CuratedList } from '@/components/CuratedList'
-import { Guide } from '@/components/Guide'
+import { Tour } from '@/components/Tour'
 import { CustomPanel, type CustomRequest, type LiveProgress } from '@/components/CustomPanel'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -269,8 +269,9 @@ export default function App() {
   const [customReq, setCustomReq] = useState<CustomRequest>({ status: 'idle' })
   const [customResult, setCustomResult] = useState<Shown | null>(null)
   const [manifest, setManifest] = useState<Manifest | null>(null)
-  /** first-time visitors get the guide once; the "?" button reopens it */
-  const [guideOpen, setGuideOpen] = useState(() => !embed && !guideSeen())
+  /** first-time visitors get the guided tour once; the "?" button replays it */
+  const [tourOpen, setTourOpen] = useState(() => !embed && !guideSeen())
+  const closeTour = useCallback(() => setTourOpen(false), [])
 
   const abortRef = useRef<AbortController | null>(null)
   /** the live session (plan + running sums + cursor) so Stop can be resumed */
@@ -645,9 +646,9 @@ export default function App() {
             <Button
               size="icon-sm"
               variant="ghost"
-              aria-label="How to read a blink"
-              title="How to read a blink"
-              onClick={() => setGuideOpen(true)}
+              aria-label="Replay the guided tour"
+              title="Replay the guided tour"
+              onClick={() => setTourOpen(true)}
             >
               <CircleHelp />
             </Button>
@@ -658,7 +659,7 @@ export default function App() {
 
       <main className="mx-auto grid max-w-6xl xl:max-w-[88rem] gap-6 px-4 py-6 lg:grid-cols-[340px_1fr]">
         {/* --- picker --- */}
-        <aside>
+        <aside data-tour="picker">
           <Card>
             <CardContent>
               <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
@@ -878,7 +879,13 @@ export default function App() {
           )}
         </section>
       </main>
-      <Guide open={guideOpen} onOpenChange={setGuideOpen} />
+      {/* the tour points at the player, so it waits until there is something to blink */}
+      <Tour
+        open={tourOpen && !!shown && shown.data.epochs.length > 1}
+        onClose={closeTour}
+        mode={display.mode}
+        cycleMs={((shown?.data.epochs.length ?? 3) / 1.5) * 1000}
+      />
     </div>
   )
 }

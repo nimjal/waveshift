@@ -1,8 +1,9 @@
 # Waveshift codebase map
 
 A reading guide for the repo: what each part does, how data moves through it, and where each
-feature lives. Line numbers are as of commit `7943a7f` (14 Nov 2026) and drift with later edits;
-every reference also names the function, so `grep -n` finds it again.
+feature lives. Line numbers in `web/` are as of the guided-tour commit; those in `py/` are as of
+`7943a7f` and will drift when the `reasons.py` refactor lands. Every reference also names the
+function, so `grep -n` finds it again.
 
 **Data layer.** Files marked **[DATA]** hold the astronomy: reading IRSA files, reprojection,
 stacking, blank-pixel reasons, motion, wavelength and photometry. They are written or verified by
@@ -63,7 +64,7 @@ web/                     Vite + React 19 + TypeScript + Tailwind v4 + shadcn/ui
       SpectrumPanel.tsx  spectrum plot for a clicked pixel
       LightCurvePanel.tsx light-curve plot
       SkyContextPanel.tsx Aladin Lite panel: survey imagery, field outline, Gaia DR3 overlay
-      Guide.tsx          first-visit "how to read a blink" dialog
+      Tour.tsx           first-visit guided tour (five steps, points at data-tour elements)
       ui/                shadcn primitives (button, card, tabs, switch, …)
     lib/
       api.ts             every fetch the app makes (static JSON, the API, Gaia from VizieR)
@@ -106,19 +107,19 @@ IRSA SIA (query.py:48) ── which exposures cover the position, grouped into e
    ├─ curated: cutouts.py → stack.py (ZODI, FLAGS, reproject, median) → pipeline.py:23
    │            → motion.py:221, photometry.py:237, spectral.py:184 → export.py:42
    │            → web/public/data/targets/<id>.json (+ .spectrum.json, targets.json, manifest.json)
-   │            → lib/api.ts:115 loadCuratedIndex, :128 loadCuratedTarget, :336 loadCuratedSpectrum
+   │            → lib/api.ts:117 loadCuratedIndex, :130 loadCuratedTarget, :338 loadCuratedSpectrum
    │
    └─ live:    GET /target (api.py:27 → live.py:127 get_plan, :144 plan_response)
-                → lib/api.ts:237 fetchLivePlan
+                → lib/api.ts:239 fetchLivePlan
                POST /target/refine, repeated (api.py:69 → live.py:278 refine → remote.py:251)
-                → lib/api.ts:252 refineLive → lib/live.ts:73 LiveStack (add :94, toTargetData :142)
-               POST /photometry (api.py:107 → photometry.py:237) ← lib/api.ts:272 fetchLightcurve
-               GET /resolve (api.py:42 → targets.py:179 resolve_name) ← lib/api.ts:318 resolveName
+                → lib/api.ts:254 refineLive → lib/live.ts:73 LiveStack (add :94, toTargetData :142)
+               POST /photometry (api.py:107 → photometry.py:237) ← lib/api.ts:274 fetchLightcurve
+               GET /resolve (api.py:42 → targets.py:179 resolve_name) ← lib/api.ts:320 resolveName
                           │
                           ▼
    App.tsx holds one `Shown` = { data: TargetData, source, spectrum } (App.tsx:40)
      → TargetHeader (App.tsx:192): name, coordinates, motion line, saturation note
-     → BlinkPlayer (components/BlinkPlayer.tsx:270): render.ts:162 renderFrames → canvas
+     → BlinkPlayer (components/BlinkPlayer.tsx:272): render.ts:162 renderFrames → canvas
          → SpectrumPanel (click a pixel), LightCurvePanel
          → SkyContextPanel (passed in as BlinkPlayer's `aside`): grid centre, field size,
            proper motion; fetches Gaia DR3 from VizieR in the browser (lib/api.ts fetchGaiaSources)
@@ -140,31 +141,32 @@ The contract is [`docs/schema.md`](docs/schema.md). In short:
   `GET /health`.
 - Rules: row 0 is the top, null means no data, never NaN, east is left.
 
-`web/src/lib/types.ts` mirrors the schema by hand; `lib/api.ts:73` (`looksLikeTargetData`) and
+`web/src/lib/types.ts` mirrors the schema by hand; `lib/api.ts:75` (`looksLikeTargetData`) and
 `lib/live.ts:54`/`:60` do light shape checks on what arrives.
 
 ## Where each feature lives
 
 | Feature | Backend | Frontend |
 | --- | --- | --- |
-| Curated target list | `cli.py:18` writes `targets.json` | `components/CuratedList.tsx:15`, `App.tsx:283` selectCurated |
-| Custom RA/Dec (live) | `api.py:27`, `api.py:69`, `live.py:71`/`:278` | `components/CustomPanel.tsx:96`, `App.tsx:342` runLive, `lib/live.ts:73` |
-| Name search | `api.py:42`, `targets.py:179` (curated aliases `:126`, Sesame `:160`) | `CustomPanel.tsx:140`, `lib/api.ts:318` |
-| Blink / difference views, stretch | — | `lib/render.ts:162` renderFrames, `BlinkPlayer.tsx:270` |
+| Curated target list | `cli.py:18` writes `targets.json` | `components/CuratedList.tsx:15`, `App.tsx:284` selectCurated |
+| Custom RA/Dec (live) | `api.py:27`, `api.py:69`, `live.py:71`/`:278` | `components/CustomPanel.tsx:96`, `App.tsx:343` runLive, `lib/live.ts:73` |
+| Name search | `api.py:42`, `targets.py:179` (curated aliases `:126`, Sesame `:160`) | `CustomPanel.tsx:140`, `lib/api.ts:320` |
+| Blink / difference views, stretch | — | `lib/render.ts:162` renderFrames, `BlinkPlayer.tsx:272` |
 | Predicted reticle and track | `pipeline.py:137` (`predicted_px`), `targets.py:22` `Target.at` | `BlinkPlayer.tsx:77` drawOverlay |
 | Scale bar, compass | — | `BlinkPlayer.tsx:123`, `:141` |
 | Measured vs predicted motion | `motion.py:221` measure_motion, `:201` null_test | `App.tsx:124` MotionLine, `:106` RefStar |
 | Blank-pixel reasons, saturation hatch | `stack.py:135` `_classify`, `:176`, `:212`; `export.py:22` | `lib/render.ts:28`/`:46`, `BlinkPlayer.tsx:51` |
-| Spectrum on click | `spectral.py:157`/`:184`, `pipeline.py:162` sidecar; live: `live.py:250` | `BlinkPlayer.tsx:403` click, `lib/spectrum.ts:23`, `components/SpectrumPanel.tsx:166` |
-| Light curve | `photometry.py:237`, `api.py:107` | `components/LightCurvePanel.tsx:238`, `lib/api.ts:272` |
-| Shareable links, Back/Forward | — | `lib/url.ts:49` readUrl, `:94` toSearch; `App.tsx:488` state → URL, `:511` URL → state |
-| Embed (`&embed=1`) | — | `App.tsx:566` |
+| Spectrum on click | `spectral.py:157`/`:184`, `pipeline.py:162` sidecar; live: `live.py:250` | `BlinkPlayer.tsx:407` click, `lib/spectrum.ts:23`, `components/SpectrumPanel.tsx:166` |
+| Light curve | `photometry.py:237`, `api.py:107` | `components/LightCurvePanel.tsx:238`, `lib/api.ts:274` |
+| Shareable links, Back/Forward | — | `lib/url.ts:49` readUrl, `:94` toSearch; `App.tsx:489` state → URL, `:512` URL → state |
+| Embed (`&embed=1`) | — | `App.tsx:580` |
 | Copy link | — | `App.tsx:78` |
-| GIF export | — | `BlinkPlayer.tsx:189` exportGif, `lib/gif.ts:120` |
-| Sky context (Aladin Lite, Gaia DR3 overlay) | — (VizieR and IRSA HiPS, straight from the browser) | `components/SkyContextPanel.tsx` (`SkyContextPanel`, `createViewer`), `lib/api.ts` `fetchGaiaSources`; built in `App.tsx` (`skyContext`) and placed by `BlinkPlayer`'s `aside` prop |
-| First-visit guide | — | `components/Guide.tsx:57`, `lib/prefs.ts:6` |
-| API-down fallback | `api.py:21` /health | `lib/api.ts:167` checkApiHealth, `CustomPanel.tsx:113`, error copy `CustomPanel.tsx:59`; no-API build `lib/api.ts:14` |
-| Freshness line | `cli.py:57` manifest | `lib/api.ts:148`, `App.tsx:861` |
+| GIF export | — | `BlinkPlayer.tsx:191` exportGif, `lib/gif.ts:120` |
+| Sky context (Aladin Lite, Gaia DR3 overlay) | — (VizieR and IRSA HiPS, straight from the browser) | `components/SkyContextPanel.tsx:227` (`createViewer` `:122`), `lib/api.ts:409` `fetchGaiaSources`; built in `App.tsx` (`skyContext`) and placed by `BlinkPlayer`'s `aside` prop |
+| First-visit guided tour, "?" replay | — | `components/Tour.tsx:97` (steps `:32`), targets marked `data-tour=` in `App.tsx` and `BlinkPlayer.tsx`, `lib/prefs.ts:6` |
+| "More controls" fold (detector, stretch, speed, epoch facts) | — | `BlinkPlayer.tsx` (`showMore`) |
+| API-down fallback | `api.py:21` /health | `lib/api.ts:169` checkApiHealth, `CustomPanel.tsx:113`, error copy `CustomPanel.tsx:59`; no-API build `lib/api.ts:16` |
+| Freshness line | `cli.py:57` manifest | `lib/api.ts:150`, `App.tsx:866` |
 
 ## Config files
 

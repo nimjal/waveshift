@@ -79,8 +79,12 @@ objects that move or change brightness, like nearby stars and brown dwarfs, stan
   joins the two. On screens 1280 px and wider the panel sits beside the blink viewer at the same
   size. On smaller screens it is a collapsed bar under the viewer and loads only when opened. If a
   service can't be reached the panel says so and nothing else is affected (see Data sources).
-- **First visit:** a 4-step "how to read a blink" guide (dismissible, remembered per browser,
-  reopened with the "?" button). Under the player, a freshness line gives the curated build date
+- **First visit:** a five-step guided tour, one sentence per step, that points at the image, the
+  visit dates, the crosshair, the Difference toggle and the target picker. The image is never
+  covered and keeps blinking; the Difference step moves on when Difference is actually chosen.
+  Skip is always there, the tour shows once per browser, and the "?" button replays it. On phones
+  the text is a sheet at the bottom of the screen. Detector, stretch, blink speed and the
+  per-epoch numbers sit under **More controls**, folded by default. Under the player, a freshness line gives the curated build date
   from `manifest.json` and the IRSA collections live views query.
 
 **When the API is unreachable:** curated targets keep working because they are static files. The
