@@ -4,7 +4,7 @@
 //     then POST {VITE_API_URL}/target/refine until done (see lib/live.ts)
 
 import { type LivePlan, looksLikePlan, looksLikeRefine, type RefineResponse } from './live'
-import type { TargetData, TargetIndexEntry } from './types'
+import type { SpectrumData, TargetData, TargetIndexEntry } from './types'
 
 // ---------------------------------------------------------------------------
 // Config
@@ -244,4 +244,61 @@ export async function refineLive(
     throw new ApiError('bad-response', 'The API returned data in an unexpected format.', { status })
   }
   return body
+}
+
+/** GET /resolve: an object name resolved server-side (curated aliases, then CDS Sesame). */
+export interface ResolvedName {
+  query: string
+  name: string
+  source: string
+  curated_id: string | null
+  /** J2000 */
+  ra: number
+  dec: number
+  pmra: number
+  pmdec: number
+  /** position moved by proper motion to the grid epoch: what a live query should use */
+  epoch: number
+  ra_epoch: number
+  dec_epoch: number
+}
+
+/** Resolve an object name. null = not found (a normal answer, not an error). */
+export async function resolveName(name: string, signal?: AbortSignal): Promise<ResolvedName | null> {
+  try {
+    const { body, status } = await apiJson(`/resolve?name=${encodeURIComponent(name)}`, { method: 'GET' }, signal)
+    const r = body as Partial<ResolvedName> | undefined
+    if (!r || typeof r.ra_epoch !== 'number' || typeof r.dec_epoch !== 'number') {
+      throw new ApiError('bad-response', 'The name resolver returned data in an unexpected format.', { status })
+    }
+    return r as ResolvedName
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return null
+    throw e
+  }
+}
+
+const spectrumCache = new Map<string, Promise<SpectrumData | null>>()
+
+/** A curated target's per-exposure spectrum samples (targets/<id>.spectrum.json, a few MB,
+ * fetched on the first spectrum request only). null if this build has no sidecar. */
+export function loadCuratedSpectrum(entry: TargetIndexEntry): Promise<SpectrumData | null> {
+  const cached = spectrumCache.get(entry.id)
+  if (cached) return cached
+  const file = entry.file.replace(/\.json$/, '.spectrum.json')
+  const p = fetchStaticJson(file)
+    .then((d) => {
+      const s = d as Partial<SpectrumData>
+      if (!s || !Array.isArray(s.exposures) || typeof s.size_px !== 'number') {
+        throw new StaticDataError(`${file} has an unexpected shape.`, false)
+      }
+      return s as SpectrumData
+    })
+    .catch((e: unknown) => {
+      if (e instanceof StaticDataError && e.missing) return null
+      throw e
+    })
+  spectrumCache.set(entry.id, p)
+  p.catch(() => spectrumCache.delete(entry.id))
+  return p
 }

@@ -6,7 +6,7 @@
 // The server only commits whole rounds (the same slot in every epoch), so every epoch is
 // always at the same depth with the same detector mix: whatever we render blinks fairly.
 
-import type { Epoch, Frame, TargetData } from './types'
+import type { Epoch, Frame, SpectrumData, SpectrumExposure, TargetData } from './types'
 
 export interface LiveExposure {
   obs_id: string
@@ -46,6 +46,8 @@ export interface RefineResponse {
     id: string
     frames: Record<string, { sum: number[][]; count: number[][]; n_images: number }>
     failed: LiveFailure[]
+    /** per-exposure samples for the spectrum (absent from older servers) */
+    exposures?: (Omit<SpectrumExposure, 'epoch'> & { slot: number })[]
   }[]
 }
 
@@ -75,6 +77,7 @@ export class LiveStack {
   done: boolean
   private readonly acc: Map<string, Acc>[]
   readonly failures: LiveFailure[][]
+  private readonly samples: SpectrumExposure[] = []
 
   constructor(plan: LivePlan) {
     this.plan = plan
@@ -108,10 +111,26 @@ export class LiveStack {
         a.n += f.n_images
       }
       this.failures[i].push(...ep.failed)
+      for (const x of ep.exposures ?? []) {
+        this.samples.push({
+          epoch: ep.id,
+          detector: x.detector,
+          obs_id: x.obs_id,
+          wave: x.wave,
+          bandwidth: x.bandwidth,
+          pixels: x.pixels,
+        })
+      }
     })
     this.cursor = res.cursor
     this.depth = res.depth
     this.done = res.done
+  }
+
+  /** Snapshot of the per-exposure samples fetched so far (live frames have no blank reasons). */
+  spectrumData(): SpectrumData {
+    const n = this.plan.grid.size_px
+    return { size_px: n, wave_origin_px: (n - 1) / 2, exposures: [...this.samples] }
   }
 
   /** Total skipped exposures across epochs. */

@@ -180,11 +180,81 @@ def _flag_rows(rf: RemoteFits, h: fits.Header, data_off: int, head: bytes, hlen:
     return arr[off:off + (y1 - y0 + 1), x0:x1 + 1], ihdr
 
 
+# WCS-WAVE tables by spectral-WCS calibration id (spectral.calib_id). The table depends on
+# detector + calibration only, so each is fetched once per process.
+_WAVE_TABLES: dict[str, object] = {}
+_WAVE_LOCK = __import__("threading").Lock()   # one header walk per table, not one per worker
+
+
+def _find_hdu(rf: RemoteFits, off: int, name: str, max_hops: int = 8) -> tuple[fits.Header, int, bytes, int]:
+    """Walk extension headers from byte `off` until EXTNAME == name ->
+    (header, padded header length, raw bytes read from the header start, header offset)."""
+    for _ in range(max_hops):
+        h, hl, raw = rf.header(off, prefetch=BLOCK * 6)
+        if str(h.get("EXTNAME", "")).strip() == name:
+            return h, hl, raw, off
+        off += hl + _data_size(h)
+    raise UnsupportedLayout(f"no {name} extension within {max_hops} HDUs")
+
+
+def _wave_table(rf: RemoteFits, h1: fits.Header, after_off: int):
+    """The WCS-WAVE table for this file (spectral.WaveTable), from the cache when its
+    calibration id was seen before; else read with range requests, walking the headers from
+    `after_off` (any HDU boundary before WCS-WAVE)."""
+    from . import spectral
+
+    cid = spectral.calib_id(h1)
+    if cid and cid in _WAVE_TABLES:
+        return _WAVE_TABLES[cid]
+    with _WAVE_LOCK:
+        return _wave_table_locked(rf, h1, after_off, cid)
+
+
+def _wave_table_locked(rf: RemoteFits, h1: fits.Header, after_off: int, cid: str | None):
+    from . import spectral
+
+    if cid and cid in _WAVE_TABLES:          # another worker fetched it while we waited
+        return _WAVE_TABLES[cid]
+    disk = None
+    if cid:
+        from .config import cache_dir
+        disk = cache_dir() / "wave" / f"{cid}.npz"
+        try:
+            with np.load(disk) as z:
+                _WAVE_TABLES[cid] = spectral.WaveTable(z["x"], z["y"], z["values"])
+                return _WAVE_TABLES[cid]
+        except (OSError, ValueError, KeyError):
+            pass
+    name = str(h1.get("PS1_0W", "WCS-WAVE")).strip()
+    hw, lw, raw, off = _find_hdu(rf, after_off, name)
+    need = lw + _data_size(hw)
+    if len(raw) < need:
+        raw = raw + rf.read(off + len(raw), off + need)
+    blob = fits.PrimaryHDU().header.tostring().encode("ascii") + raw[:need]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with fits.open(io.BytesIO(blob)) as hd:
+            table = spectral.read_wave_table(hd[1], h1)
+    if cid:
+        _WAVE_TABLES[cid] = table
+        try:
+            disk.parent.mkdir(parents=True, exist_ok=True)
+            tmp = disk.with_suffix(".part.npz")
+            with open(tmp, "wb") as fh:
+                np.savez(fh, x=table.x, y=table.y, values=table.values)
+            tmp.replace(disk)
+        except OSError:
+            pass
+    return table
+
+
 def read_window(client: httpx.Client, url: str, coord: SkyCoord, half: int, deadline: float,
-                bad_flags: list[str] | None = None, subtract_zodi: bool = True,
-                ) -> tuple[np.ndarray, WCS]:
+                bad_flags: list[str] | None = None, subtract_zodi: bool = True, wave: bool = False,
+                ) -> tuple:
     """A (2*half+1)^2 window of IMAGE (- ZODI) centred on `coord`, flagged pixels -> NaN,
     plus its celestial WCS. Same result as load_cutout() on an IRSA cutout of that area.
+    wave=True adds a third item: (window header, spectral.WaveTable) for spectral.wavelength_at
+    / grid_wavelength (CRPIXjW shifted to the window like CRPIXj), or None if unavailable.
     Raises NoCoverage, UnsupportedLayout, Unavailable, DeadlineExceeded, httpx errors."""
 
     from .stack import bad_mask
@@ -239,8 +309,20 @@ def read_window(client: httpx.Client, url: str, coord: SkyCoord, half: int, dead
     win["NAXIS1"], win["NAXIS2"] = x1c - x0c + 1, y1c - y0c + 1
     win["CRPIX1"] = h1["CRPIX1"] - x0c
     win["CRPIX2"] = h1["CRPIX2"] - y0c
-    
+    if "CRPIX1W" in win:    # spectral lookup table: same shift (window pixel 1 = full pixel x0c + 1)
+        win["CRPIX1W"] = h1["CRPIX1W"] - x0c
+        win["CRPIX2W"] = h1["CRPIX2W"] - y0c
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", FITSFixedWarning)
         wcs = WCS(win).celestial
-    return data, wcs
+    if not wave:
+        return data, wcs
+    spec = None
+    if "CTYPE1W" in h1:
+        try:
+            spec = (win, _wave_table(rf, h1, flags_off + lf + _data_size(hf)))   # walk starts after FLAGS
+        except (UnsupportedLayout, ValueError, KeyError, DeadlineExceeded, Unavailable, httpx.HTTPError) as e:
+            import logging
+            logging.getLogger(__name__).info("no spectral table for %s: %s", url, e)
+    return data, wcs, spec

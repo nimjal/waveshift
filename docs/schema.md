@@ -25,6 +25,23 @@ epochs: [{
   }
 }]
 
+motion?: {                           # only for targets with a known proper motion (planetx/motion.py)
+  measurable, measured_px | null, predicted_px,   # first -> last epoch, screen px
+  detector | null, window_px: 3, min_snr: 3, from_epoch, to_epoch,
+  reason: null | "saturated" | "faint" | "no_data",
+  centroids: [{ epoch, x, y, snr }]                # chosen detector, screen px
+}
+
+## web/public/data/targets/<id>.spectrum.json   (per-exposure samples, loaded on the first click)
+target, size_px, units, wave_unit: "um", wave_origin_px: (size_px - 1) / 2
+exposures: [{ epoch, detector, obs_id,
+              wave: [l0, dl_dcol, dl_drow],   # um at screen pixel (col,row) = l0 + dl_dcol*(col-o) + dl_drow*(row-o)
+              bandwidth,                       # um, at the field centre
+              pixels: [[...]],                 # this exposure alone on the grid, row 0 = top, null = blank
+              reasons?: ["0102..."] }]         # same codes as frames (only when something is blank)
+- wavelength: planetx/spectral.py (WAVE-TAB lookup in each file's WCS-WAVE extension), fitted
+  as a plane over the grid (max residual ~1e-6 um).
+
 ## web/public/data/manifest.json
 { generated_at, collections[], counts: { <id>: { images, used, epochs } } }   # counts merged across partial builds
 
@@ -97,9 +114,21 @@ epochs: [{ id,
   flagged), `unavailable` (archive kept failing; given up after 2 no-progress calls),
   `bad_file`, `http_NNN`, `error`. A failed exposure still counts towards depth (it is a
   settled slot), so depth stays equal; it just contributes nothing.
+- `exposures` (per epoch): per-exposure samples for the spectrum,
+  `[{ slot, obs_id, detector, wave, bandwidth, pixels }]` (same meaning as the spectrum sidecar;
+  live frames have no `reasons`). Only exposures with usable pixels and a wavelength are listed.
 - Errors: 422 bad input or cursor · 409 plan changed (archive updated): restart from GET
   /target · 502 upstream failure. A failed call changes nothing: retry with the same cursor.
 - Pixels are read with HTTP range requests straight from the IRSA L2 files (IMAGE rows + RICE
   FLAGS tiles, ~300 KB per exposure). ZODI is not subtracted: over a 2.5′ window it is a
   near-constant that per-frame background subtraction removes (measured < 3e-5 of frame rms).
   Files with an unexpected layout fall back to the IRSA cutout service.
+
+### GET /resolve?name=   → object name to position
+Curated target names / aliases first (config values, no network), then CDS Sesame (Strasbourg,
+then the Harvard mirror). 404 = not found, 502 = Sesame unreachable, 422 = empty name.
+```
+{ query, name, source, curated_id | null,
+  ra, dec, pmra, pmdec,              # J2000, mas/yr (pmra includes cos dec)
+  epoch, ra_epoch, dec_epoch }       # moved by proper motion to the grid epoch: centre the live query here
+```

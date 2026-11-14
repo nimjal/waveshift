@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from . import config, live
+from . import config, live, targets
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +37,26 @@ def target(ra: float = Query(..., ge=0, lt=360),
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"upstream failure: {type(e).__name__}: {e}") from e
     return live.plan_response(plan, sources)
+
+
+@app.get("/resolve")
+def resolve(name: str = Query(..., min_length=1, max_length=100)) -> dict:
+    """Object name -> position (curated aliases first, then CDS Sesame), with the position
+    propagated by proper motion to the grid epoch. 404 = not found; 502 = Sesame down."""
+
+    sources = config.load_sources()
+    epoch = float(sources["spherex"].get("obs_epoch", 2025.9))
+    try:
+        cfgs = config.load_targets()
+    except (OSError, KeyError, ValueError):
+        cfgs = []
+    try:
+        hit = targets.resolve_name(name.strip(), epoch, cfgs)
+    except ConnectionError as e:
+        raise HTTPException(502, f"name resolver unavailable: {e}") from e
+    if hit is None:
+        raise HTTPException(404, f"no object called {name.strip()!r} was found")
+    return hit
 
 
 class RefineRequest(BaseModel):

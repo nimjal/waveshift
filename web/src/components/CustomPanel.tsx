@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, Loader2, Telescope } from 'lucide-react'
+import { AlertTriangle, Loader2, Search, Telescope } from 'lucide-react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { API_URL, type ApiError, checkApiHealth, validateCoords } from '@/lib/api'
+import { API_URL, ApiError, checkApiHealth, type ResolvedName, resolveName, validateCoords } from '@/lib/api'
 import { parseDec, parseRa } from '@/lib/coords'
 
 export interface LiveProgress {
@@ -97,6 +97,14 @@ export function CustomPanel({ request, initialRa = '', initialDec = '', onSubmit
   const [raText, setRaText] = useState(initialRa)
   const [decText, setDecText] = useState(initialDec)
   const [formError, setFormError] = useState<string | null>(null)
+  const [nameText, setNameText] = useState('')
+  const [lookup, setLookup] = useState<
+    | { status: 'idle' }
+    | { status: 'busy'; name: string }
+    | { status: 'found'; hit: ResolvedName }
+    | { status: 'not-found'; name: string }
+    | { status: 'error'; name: string; message: string }
+  >({ status: 'idle' })
   const [health, setHealth] = useState<'checking' | 'up' | 'down' | 'none'>(API_URL ? 'checking' : 'none')
 
   useEffect(() => {
@@ -108,8 +116,45 @@ export function CustomPanel({ request, initialRa = '', initialDec = '', onSubmit
     return () => ctrl.abort()
   }, [])
 
+  // A run started from outside the form (a link, Back/Forward) shows its position in the fields.
+  const [seenRequest, setSeenRequest] = useState(request)
+  if (request !== seenRequest) {
+    setSeenRequest(request)
+    if (request.status === 'planning' && (parseRa(raText) !== request.ra || parseDec(decText) !== request.dec)) {
+      setRaText(String(request.ra))
+      setDecText(String(request.dec))
+    }
+  }
+
   const loading = request.status === 'planning' || request.status === 'refining'
   const elapsed = useElapsed(loading ? request.startedAt : null)
+
+  // Resolve on the server, show the result, fill RA/Dec with the position at the grid epoch
+  // (proper motion applied), then start the live query.
+  const findName = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const name = nameText.trim()
+    if (!name) return
+    setLookup({ status: 'busy', name })
+    try {
+      const hit = await resolveName(name)
+      if (!hit) {
+        setLookup({ status: 'not-found', name })
+        return
+      }
+      setLookup({ status: 'found', hit })
+      setRaText(String(hit.ra_epoch))
+      setDecText(String(hit.dec_epoch))
+      setFormError(null)
+      onSubmit(hit.ra_epoch, hit.dec_epoch)
+    } catch (err) {
+      const message =
+        err instanceof ApiError && err.kind === 'network'
+          ? "Couldn't reach the server."
+          : 'The name service (CDS Sesame) did not answer. Try again, or enter RA/Dec.'
+      setLookup({ status: 'error', name, message })
+    }
+  }
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -152,6 +197,50 @@ export function CustomPanel({ request, initialRa = '', initialDec = '', onSubmit
         epoch: the <strong className="text-foreground">first frames appear within seconds</strong> and sharpen as more
         exposures arrive. Long-wavelength detectors (D6, D5) come first, where cold objects are brightest.
       </p>
+
+      <form onSubmit={(e) => void findName(e)} className="flex flex-col gap-1.5" noValidate>
+        <Label htmlFor="objname">Object name</Label>
+        <div className="flex gap-2">
+          <Input
+            id="objname"
+            placeholder="Mira, M42, WISE 0855…"
+            value={nameText}
+            onChange={(e) => setNameText(e.target.value)}
+            disabled={loading || lookup.status === 'busy'}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <Button type="submit" variant="secondary" disabled={loading || lookup.status === 'busy' || !nameText.trim()}>
+            {lookup.status === 'busy' ? <Loader2 className="animate-spin" /> : <Search />} Find
+          </Button>
+        </div>
+        <div aria-live="polite" className="text-xs">
+          {lookup.status === 'busy' && <p className="text-muted-foreground">Looking up “{lookup.name}”…</p>}
+          {lookup.status === 'found' && (
+            <p className="rounded-md border border-border bg-muted/40 px-2 py-1.5">
+              <strong>{lookup.hit.name}</strong>
+              {lookup.hit.name.toLowerCase() !== lookup.hit.query.toLowerCase() && (
+                <span className="text-muted-foreground"> (“{lookup.hit.query}”)</span>
+              )}{' '}
+              → <span className="font-mono">RA {lookup.hit.ra_epoch.toFixed(4)}°, Dec {lookup.hit.dec_epoch >= 0 ? '+' : ''}
+              {lookup.hit.dec_epoch.toFixed(4)}°</span>
+              <span className="block text-muted-foreground">
+                Position at {lookup.hit.epoch}
+                {lookup.hit.pmra || lookup.hit.pmdec
+                  ? ` (J2000 ${lookup.hit.ra.toFixed(4)}, ${lookup.hit.dec.toFixed(4)} moved by its proper motion)`
+                  : ''}
+                . Source: {lookup.hit.source}.
+              </span>
+            </p>
+          )}
+          {lookup.status === 'not-found' && (
+            <p className="text-muted-foreground">
+              No object called “{lookup.name}” was found. Check the spelling, or enter RA/Dec below.
+            </p>
+          )}
+          {lookup.status === 'error' && <p className="text-amber-600 dark:text-amber-400">{lookup.message}</p>}
+        </div>
+      </form>
 
       <form onSubmit={submit} className="flex flex-col gap-3" noValidate>
         <div className="grid grid-cols-2 gap-3">

@@ -20,7 +20,10 @@ import {
   type Stretch,
   type ViewMode,
 } from '@/lib/render'
-import type { Frame, TargetData } from '@/lib/types'
+import { SpectrumPanel } from '@/components/SpectrumPanel'
+import type { Pick } from '@/lib/spectrum'
+import type { Frame, SpectrumData, TargetData } from '@/lib/types'
+import type { DisplayState } from '@/lib/url'
 import { cn } from '@/lib/utils'
 
 /** CSS pixels per sky pixel at full size (25 px grid → 500 px canvas). */
@@ -167,19 +170,49 @@ function drawOverlay(
 
 interface Props {
   data: TargetData
+  /** detector / view / stretch: owned by the app so they can live in the URL */
+  display: DisplayState
+  onDisplayChange: (next: DisplayState) => void
+  /** per-exposure samples for the click-to-spectrum panel: already in memory (live) or
+   * fetched on the first click (curated sidecar file) */
+  spectrum?: { live: SpectrumData } | { load: () => Promise<SpectrumData | null> }
 }
 
-export function BlinkPlayer({ data }: Props) {
+/** Outline the picked pixel (or, when following the target, its position this epoch). */
+function drawPick(ctx: CanvasRenderingContext2D, data: TargetData, epochIdx: number, pick: Pick) {
+  const p = data.epochs[epochIdx].predicted_px
+  const r = pick.follow ? Math.round(p.y) : pick.r
+  const c = pick.follow ? Math.round(p.x) : pick.c
+  ctx.save()
+  ctx.strokeStyle = '#000'
+  ctx.lineWidth = 4
+  ctx.strokeRect(c * CELL - 1, r * CELL - 1, CELL + 2, CELL + 2)
+  ctx.strokeStyle = '#fff'
+  ctx.lineWidth = 2
+  ctx.strokeRect(c * CELL - 1, r * CELL - 1, CELL + 2, CELL + 2)
+  ctx.restore()
+}
+
+export function BlinkPlayer({ data, display, onDisplayChange, spectrum }: Props) {
   const frameKeys = useMemo(() => availableFrameKeys(data), [data])
   const nEpochs = data.epochs.length
 
   const [epochIdx, setEpochIdx] = useState(0)
   const [playing, setPlaying] = useState(nEpochs > 1)
   const [fps, setFps] = useState(1.5)
-  const [frameKey, setFrameKey] = useState(frameKeys[0] ?? 'ALL')
-  const [stretch, setStretch] = useState<Stretch>('asinh')
-  const [mode, setMode] = useState<ViewMode>('blink')
   const [showMarker, setShowMarker] = useState(true)
+  const [pick, setPick] = useState<Pick | null>(null)
+  const [loaded, setLoaded] = useState<SpectrumData | null | 'loading' | 'error'>(null)
+  const spectrumData = spectrum && 'live' in spectrum ? spectrum.live : loaded
+
+  // A requested detector this target doesn't have (yet: live views fetch D6/D5 first) is
+  // shown as the default instead; the request is kept, so it applies once it arrives.
+  const detMissing = !frameKeys.includes(display.det)
+  const frameKey = detMissing ? (frameKeys[0] ?? 'ALL') : display.det
+  const { mode, stretch } = display
+  const setFrameKey = (det: string) => onDisplayChange({ ...display, det })
+  const setMode = (m: ViewMode) => onDisplayChange({ ...display, mode: m })
+  const setStretch = (st: Stretch) => onDisplayChange({ ...display, stretch: st })
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
@@ -219,7 +252,8 @@ export function BlinkPlayer({ data }: Props) {
       ctx.fillText(`No ${frameKey} data in this epoch`, full / 2, full / 2)
     }
     drawOverlay(ctx, data, epochIdx, showMarker)
-  }, [data, rendered, epochIdx, showMarker, frameKey])
+    if (pick) drawPick(ctx, data, epochIdx, pick)
+  }, [data, rendered, epochIdx, showMarker, frameKey, pick])
 
   const step = useCallback(
     (delta: number) => {
@@ -272,6 +306,29 @@ export function BlinkPlayer({ data }: Props) {
     const r = Math.floor(((e.clientY - box.top) / box.height) * n)
     setHover(r >= 0 && c >= 0 && r < n && c < n ? { r, c } : null)
   }
+  // click: spectrum of that pixel. Clicking within 1.5 px of the reticle of a target with a
+  // known proper motion follows the target instead (each epoch at its own predicted position).
+  const onCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const box = e.currentTarget.getBoundingClientRect()
+    const n = data.grid.size_px
+    const fx = ((e.clientX - box.left) / box.width) * n - 0.5
+    const fy = ((e.clientY - box.top) / box.height) * n - 0.5
+    const c = Math.round(fx)
+    const r = Math.round(fy)
+    if (r < 0 || c < 0 || r >= n || c >= n) return
+    const p = data.epochs[epochIdx].predicted_px
+    const moves = data.target.pmra !== 0 || data.target.pmdec !== 0
+    const follow = moves && Math.hypot(fx - p.x, fy - p.y) <= 1.5
+    setPick({ r, c, follow })
+    if (spectrum && 'load' in spectrum && (loaded === null || loaded === 'error')) {
+      setLoaded('loading')
+      spectrum.load().then(
+        (d) => setLoaded(d),
+        () => setLoaded('error'),
+      )
+    }
+  }
+
   let hoverText: string | null = null
   if (hover && frame) {
     const v = frame.pixels[hover.r]?.[hover.c]
@@ -292,6 +349,8 @@ export function BlinkPlayer({ data }: Props) {
             aria-label={`${data.target.name}, epoch ${epoch.label}, ${detectorLabel(frameKey, data)}`}
             onPointerMove={onPointerMove}
             onPointerLeave={() => setHover(null)}
+            onClick={onCanvasClick}
+            style={{ cursor: spectrum ? 'crosshair' : undefined }}
           />
           <div className="pointer-events-none absolute top-2 left-2 rounded bg-black/60 px-2 py-1 font-mono text-sm text-white">
             {epoch.id} · {epoch.label}
@@ -344,12 +403,21 @@ export function BlinkPlayer({ data }: Props) {
             <ChevronRight />
           </Button>
         </div>
+        {spectrum && !pick && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Click the target or any pixel to plot its spectrum from the exposures in this view.
+          </p>
+        )}
         {nEpochs < 2 && (
           <p className="mt-2 text-sm text-muted-foreground">
             Only one epoch has data here, so there's nothing to blink against yet.
           </p>
         )}
       </div>
+
+      {pick && spectrum && (
+        <SpectrumPanel data={data} spectrum={spectrumData} pick={pick} onClose={() => setPick(null)} />
+      )}
 
       {/* controls */}
       <div className="grid gap-4 sm:grid-cols-2">
@@ -367,6 +435,11 @@ export function BlinkPlayer({ data }: Props) {
               ))}
             </SelectContent>
           </Select>
+          {detMissing && frameKeys.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {display.det} has no data here{data.target.kind === 'custom' ? ' yet' : ''}; showing {frameKey}.
+            </p>
+          )}
         </div>
 
         <div className="flex flex-col gap-2">

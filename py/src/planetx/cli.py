@@ -38,10 +38,13 @@ def build(only: list[str] | None = None) -> None:
         print(f"▶ {cfg['id']} — {cfg['name']}", flush=True)
         try:
             t = targets.resolve(cfg)
-            data = build_target(t, sources, config.cache_dir(), progress=_progress)
+            data = build_target(t, sources, config.cache_dir(), progress=_progress, spectrum=True)
         except Exception as e:  # noqa: BLE001 — one bad target shouldn't stop the rest
             print(f"  ✗ {cfg['id']}: {type(e).__name__}: {e}", flush=True)
             continue
+        spec = data.pop("spectrum", None)
+        if spec is not None:   # lazily loaded by the web app on the first spectrum click
+            write_json(out / "targets" / f"{t.id}.spectrum.json", spec)
         write_json(out / "targets" / f"{t.id}.json", data)
         index[t.id] = {"id": t.id, "name": t.name, "kind": t.kind, "file": f"targets/{t.id}.json",
                        "n_epochs": len(data["epochs"])}
@@ -58,6 +61,32 @@ def build(only: list[str] | None = None) -> None:
     })
 
 
+def annotate(only: list[str] | None = None) -> None:
+    """Recompute derived fields of already-built target files without touching the archive:
+    `motion` (motion.measure_motion) for every target with a known proper motion."""
+    from . import motion
+
+    out = config.web_data_dir() / "targets"
+    for cfg in config.load_targets():
+        if only and cfg["id"] not in only:
+            continue
+        path = out / f"{cfg['id']}.json"
+        if not path.exists():
+            print(f"  - {cfg['id']}: not built", flush=True)
+            continue
+        data = json.loads(path.read_text())
+        t = data.get("target", {})
+        m = motion.measure_motion(data) if (t.get("pmra") or t.get("pmdec")) else None
+        data.pop("motion", None)
+        if m is not None:
+            data["motion"] = m
+        write_json(path, data)
+        desc = ("no motion" if m is None else
+                f"{m['measured_px']:.2f} px vs {m['predicted_px']:.2f} predicted ({m['detector']})"
+                if m["measurable"] else f"not measurable ({m['reason']})")
+        print(f"  ✓ {cfg['id']}: {desc}", flush=True)
+
+
 def main() -> None:
     """argparse: `planetx build [ids ...]` -> build(ids or None)."""
     logging.basicConfig(level=logging.WARNING, format="  %(levelname)s %(message)s")
@@ -65,9 +94,13 @@ def main() -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build", help="build curated targets into web/public/data")
     b.add_argument("ids", nargs="*", help="only these target ids")
+    a = sub.add_parser("annotate", help="recompute derived fields (motion) of built target files")
+    a.add_argument("ids", nargs="*", help="only these target ids")
     args = p.parse_args()
     if args.cmd == "build":
         build(args.ids or None)
+    elif args.cmd == "annotate":
+        annotate(args.ids or None)
 
 
 if __name__ == "__main__":

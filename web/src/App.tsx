@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2, Orbit, SearchX, Square, TriangleAlert } from 'lucide-react'
+import { Check, Info, Link2, Loader2, Orbit, SearchX, Square, TriangleAlert, X } from 'lucide-react'
+import { Popover } from 'radix-ui'
 
 import { BlinkPlayer } from '@/components/BlinkPlayer'
 import { CuratedList } from '@/components/CuratedList'
@@ -9,10 +10,20 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ApiError, fetchLivePlan, loadCuratedIndex, loadCuratedTarget, refineLive, StaticDataError } from '@/lib/api'
+import {
+  API_URL,
+  ApiError,
+  fetchLivePlan,
+  loadCuratedIndex,
+  loadCuratedSpectrum,
+  loadCuratedTarget,
+  refineLive,
+  StaticDataError,
+} from '@/lib/api'
 import { describeFailures, LiveStack } from '@/lib/live'
 import { coreSaturated, motionPxPerYear } from '@/lib/render'
-import type { DataSource, TargetData, TargetIndexEntry } from '@/lib/types'
+import type { DataSource, Motion, SpectrumData, TargetData, TargetIndexEntry } from '@/lib/types'
+import { copyText, type DisplayState, readUrl, sameSource, toSearch } from '@/lib/url'
 
 type IndexState =
   | { status: 'loading' }
@@ -24,27 +35,97 @@ type Tab = 'curated' | 'custom'
 interface Shown {
   data: TargetData
   source: DataSource
-}
-
-// --- URL hash: #target=<id>  or  #ra=<deg>&dec=<deg> ------------------------
-
-function readHash(): { target?: string; ra?: string; dec?: string } {
-  const p = new URLSearchParams(window.location.hash.slice(1))
-  return { target: p.get('target') ?? undefined, ra: p.get('ra') ?? undefined, dec: p.get('dec') ?? undefined }
-}
-
-function writeHash(source: DataSource) {
-  const p =
-    source.kind === 'curated'
-      ? new URLSearchParams({ target: source.id })
-      : new URLSearchParams({ ra: String(source.ra), dec: String(source.dec) })
-  window.history.replaceState(null, '', `#${p.toString()}`)
+  spectrum?: { live: SpectrumData } | { load: () => Promise<SpectrumData | null> }
 }
 
 // --- helpers --------------------------------------------------------------------
 
 function fmtCoord(v: number, signed = false): string {
   return `${signed && v >= 0 ? '+' : ''}${v.toFixed(4)}°`
+}
+
+function CopyLinkButton() {
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  useEffect(() => {
+    if (state === 'idle') return
+    const t = window.setTimeout(() => setState('idle'), 2000)
+    return () => window.clearTimeout(t)
+  }, [state])
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      className="ml-auto"
+      onClick={() => void copyText(window.location.href).then((ok) => setState(ok ? 'copied' : 'failed'))}
+      aria-live="polite"
+    >
+      {state === 'copied' ? <Check /> : <Link2 />}
+      {state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy failed: use the address bar' : 'Copy link'}
+    </Button>
+  )
+}
+
+const NOT_MEASURABLE: Record<NonNullable<Motion['reason']>, string> = {
+  saturated: 'the target is saturated in every detector',
+  faint: 'the target is too faint to centroid',
+  no_data: 'the target has no usable data in some epoch',
+}
+
+function MotionLine({ m }: { m: Motion }) {
+  return (
+    <span className="text-foreground">
+      {m.measurable && m.measured_px !== null ? (
+        <>
+          Measured shift <strong className="tabular-nums">{m.measured_px.toFixed(2)} px</strong> vs{' '}
+          <strong className="tabular-nums">{m.predicted_px.toFixed(2)} px</strong> predicted ({m.from_epoch}→{m.to_epoch}
+          ).{' '}
+          <span className="text-muted-foreground">
+            Centroid estimate: {m.window_px}×{m.window_px} px window in {m.detector}, the reddest detector with peak S/N ≥{' '}
+            {m.min_snr} in every epoch.
+          </span>
+        </>
+      ) : (
+        <>
+          Measured shift: <strong>not measurable</strong>{' '}
+          <span className="text-muted-foreground">
+            ({m.reason ? NOT_MEASURABLE[m.reason] : 'no usable detector'}; {m.predicted_px.toFixed(2)} px predicted).
+          </span>
+        </>
+      )}
+    </span>
+  )
+}
+
+/** Tap/click info bubble (a hover tooltip wouldn't open on phones). */
+function StackInfo({ live }: { live: boolean }) {
+  return (
+    <Popover.Root>
+      <Popover.Trigger asChild>
+        <button
+          type="button"
+          className="inline-flex cursor-pointer items-center gap-1 align-middle text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground"
+        >
+          <Info className="size-3.5" />
+          {live ? 'mean stack' : 'median stack'}
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          side="top"
+          sideOffset={6}
+          collisionPadding={12}
+          className="z-50 max-w-72 rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md"
+        >
+          Live views use a mean stack; curated targets use a median stack.{' '}
+          <span className="text-muted-foreground">
+            A live view is summed a batch at a time while it refines, and a median can't be built up that way. A mean
+            is more sensitive to outliers such as cosmic rays or satellite trails.
+          </span>
+          <Popover.Arrow className="fill-border" />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  )
 }
 
 function TargetHeader({ shown }: { shown: Shown }) {
@@ -62,6 +143,7 @@ function TargetHeader({ shown }: { shown: Shown }) {
           {t.kind}
         </Badge>
         {source.kind === 'custom' && <Badge variant="outline">live</Badge>}
+        <CopyLinkButton />
       </div>
       <CardDescription className="flex flex-col gap-1">
         <span className="font-mono text-xs">
@@ -86,6 +168,7 @@ function TargetHeader({ shown }: { shown: Shown }) {
             shifts or changes brightness between epochs.
           </span>
         )}
+        {data.motion && <MotionLine m={data.motion} />}
         {coreSaturated(data) && (
           <span className="flex items-center gap-1.5 text-foreground">
             <TriangleAlert className="size-4 shrink-0 text-amber-500" />
@@ -93,7 +176,8 @@ function TargetHeader({ shown }: { shown: Shown }) {
           </span>
         )}
         <span className="text-xs">
-          {data.n_used} of {data.n_images} images used · {data.collections.join(', ') || 'no collections'} · built{' '}
+          {data.n_used} of {data.n_images} images used · <StackInfo live={source.kind === 'custom'} /> ·{' '}
+          {data.collections.join(', ') || 'no collections'} · built{' '}
           {new Date(data.generated_at).toLocaleString()}
         </span>
       </CardDescription>
@@ -104,8 +188,16 @@ function TargetHeader({ shown }: { shown: Shown }) {
 // --- app ------------------------------------------------------------------------
 
 export default function App() {
-  const [initialHash] = useState(readHash)
-  const [tab, setTab] = useState<Tab>(initialHash.ra || initialHash.dec ? 'custom' : 'curated')
+  const [initialUrl] = useState(() => readUrl())
+  const initialCustom = initialUrl.source?.kind === 'custom' ? initialUrl.source : null
+  const [tab, setTab] = useState<Tab>(initialCustom ? 'custom' : 'curated')
+  const [display, setDisplay] = useState<DisplayState>(initialUrl.display)
+  /** link parameters that were ignored (bad link): shown once as a dismissible notice */
+  const [notice, setNotice] = useState<string[]>(() =>
+    initialCustom && !API_URL
+      ? [...initialUrl.problems, 'custom coordinates need the live API, which this site does not have']
+      : initialUrl.problems,
+  )
   const [index, setIndex] = useState<IndexState>({ status: 'loading' })
   const [shown, setShown] = useState<Shown | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -132,8 +224,7 @@ export default function App() {
       const data = await loadCuratedTarget(entry)
       if (seq !== selectionSeq.current) return
       const source: DataSource = { kind: 'curated', id: entry.id }
-      setShown({ data, source })
-      writeHash(source)
+      setShown({ data, source, spectrum: { load: () => loadCuratedSpectrum(entry) } })
     } catch (e) {
       if (seq !== selectionSeq.current) return
       setCuratedError(e instanceof Error ? e.message : String(e))
@@ -149,9 +240,11 @@ export default function App() {
       .then((targets) => {
         if (cancelled) return
         setIndex({ status: 'ok', targets })
-        const wanted = targets.find((t) => t.id === initialHash.target)
-        const wantsCustom = !!(initialHash.ra || initialHash.dec)
-        const first = wanted ?? (wantsCustom ? undefined : targets.find((t) => t.n_epochs > 0) ?? targets[0])
+        const src = initialUrl.source
+        const wanted = src?.kind === 'curated' ? targets.find((t) => t.id === src.id) : undefined
+        if (src?.kind === 'curated' && !wanted) setNotice((n) => [...n, `there is no curated target "${src.id}"`])
+        const liveFromLink = src?.kind === 'custom' && !!API_URL
+        const first = wanted ?? (liveFromLink ? undefined : targets.find((t) => t.n_epochs > 0) ?? targets[0])
         if (first) void selectCurated(first)
       })
       .catch((e: unknown) => {
@@ -165,7 +258,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [selectCurated, initialHash])
+  }, [selectCurated, initialUrl])
 
   // Live refinement. Fired from user actions (never from an effect) so StrictMode can't
   // double-fire it. GET the plan, then POST refine with the cursor until done; each
@@ -196,12 +289,11 @@ export default function App() {
       const cycle = new Set(st.plan.refine.slots).size
       const usable = data.epochs.every((e) => e.frames.ALL && e.frames.ALL.flagged_fraction <= 0.5)
       if (!st.done && st.depth < cycle && !usable) return
-      const result: Shown = { data, source: { kind: 'custom', ra, dec } }
+      const result: Shown = { data, source: { kind: 'custom', ra, dec }, spectrum: { live: st.spectrumData() } }
       setCustomResult(result)
       if (seq === selectionSeq.current) {
         setShown(result)
         setSelectedId(null)
-        writeHash(result.source)
       }
     }
     const newStack = async () => {
@@ -303,7 +395,77 @@ export default function App() {
     }
   }, [])
 
+  // A link with custom coordinates starts its live query right away. Scheduled with a
+  // timer that the cleanup cancels, so StrictMode's mount → unmount → mount runs it once.
+  useEffect(() => {
+    if (!initialCustom || !API_URL) return
+    const t = window.setTimeout(() => void runLive(initialCustom.ra, initialCustom.dec, false), 0)
+    return () => window.clearTimeout(t)
+  }, [initialCustom, runLive])
+
+  // State → URL. A new target or position pushes a history entry (so Back returns to the
+  // previous one); detector / view / stretch tweaks and the landing URL only replace it.
+  const shownSource = shown?.source ?? null
+  const firstWrite = useRef(true)
+  /** set while Back/Forward restores a view: the URL is already right, so don't write
+   * (a write before the restored target arrives would push and wipe Forward history) */
+  const restoringTo = useRef<DataSource | null>(null)
+  useEffect(() => {
+    if (!shownSource) return
+    if (restoringTo.current) {
+      if (!sameSource(restoringTo.current, shownSource)) return
+      restoringTo.current = null
+      return
+    }
+    const search = toSearch(shownSource, display)
+    const landing = firstWrite.current
+    firstWrite.current = false
+    if (search === window.location.search && !window.location.hash) return
+    const current = readUrl(window.location).source
+    const push = !landing && !!current && !sameSource(current, shownSource)
+    const url = `${window.location.pathname}${search}`
+    if (push) window.history.pushState(null, '', url)
+    else window.history.replaceState(null, '', url)
+  }, [shownSource, display])
+
+  // URL → state on Back / Forward.
+  const latest = useRef({ index, customResult, shown })
+  useEffect(() => {
+    latest.current = { index, customResult, shown }
+  })
+  useEffect(() => {
+    const onPop = () => {
+      const { source, display: d } = readUrl(window.location)
+      const { index: idx, customResult: cr, shown: sh } = latest.current
+      restoringTo.current = null
+      setDisplay(d)
+      if (!source || sameSource(source, sh?.source ?? null)) return
+      restoringTo.current = source
+      if (source.kind === 'curated') {
+        const entry = idx.status === 'ok' ? idx.targets.find((t) => t.id === source.id) : undefined
+        setTab('curated')
+        if (entry) void selectCurated(entry)
+        else restoringTo.current = null
+        return
+      }
+      setTab('custom')
+      if (cr && sameSource(cr.source, source)) {
+        stopLiveRef.current()
+        selectionSeq.current++
+        setShown(cr)
+        setSelectedId(null)
+      } else if (API_URL) {
+        void runLive(source.ra, source.dec, true)
+      } else {
+        restoringTo.current = null
+      }
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [runLive, selectCurated])
+
   const showCurated = useCallback(() => {
+    restoringTo.current = null
     setTab('curated')
     if (shown?.source.kind !== 'curated' && index.status === 'ok') {
       const first = index.targets.find((t) => t.n_epochs > 0) ?? index.targets[0]
@@ -319,11 +481,11 @@ export default function App() {
     shown?.source.kind === 'custom' && shown === customResult && 'progress' in customReq ? customReq.progress : null
 
   const showCustomResult = () => {
+    restoringTo.current = null
     if (!customResult) return
     selectionSeq.current++
     setShown(customResult)
     setSelectedId(null)
-    writeHash(customResult.source)
   }
 
   return (
@@ -383,7 +545,10 @@ export default function App() {
                         targets={index.targets}
                         selectedId={selectedId}
                         loadingId={loadingId}
-                        onSelect={(t) => void selectCurated(t)}
+                        onSelect={(t) => {
+                          restoringTo.current = null
+                          void selectCurated(t)
+                        }}
                       />
                     </>
                   )}
@@ -399,9 +564,12 @@ export default function App() {
                 <TabsContent value="custom" forceMount className="data-[state=inactive]:hidden">
                   <CustomPanel
                     request={customReq}
-                    initialRa={initialHash.ra}
-                    initialDec={initialHash.dec}
-                    onSubmit={(ra, dec) => void runLive(ra, dec, false)}
+                    initialRa={initialCustom ? String(initialCustom.ra) : undefined}
+                    initialDec={initialCustom ? String(initialCustom.dec) : undefined}
+                    onSubmit={(ra, dec) => {
+                      restoringTo.current = null
+                      void runLive(ra, dec, false)
+                    }}
                     onResume={(ra, dec) => void runLive(ra, dec, true)}
                     onCancel={stopLive}
                     onShowCurated={showCurated}
@@ -472,6 +640,19 @@ export default function App() {
             </div>
           )}
 
+          {notice.length > 0 && (
+            <div
+              role="status"
+              className="mb-3 flex items-start justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm"
+            >
+              <span>
+                Part of this link couldn't be used ({notice.join('; ')}); defaults are shown for that part.
+              </span>
+              <Button size="icon-xs" variant="ghost" aria-label="Dismiss" onClick={() => setNotice([])}>
+                <X />
+              </Button>
+            </div>
+          )}
           {shown ? (
             <Card>
               <TargetHeader shown={shown} />
@@ -491,6 +672,12 @@ export default function App() {
                   <BlinkPlayer
                     key={`${shown.source.kind}:${shown.data.target.id}:${shown.data.generated_at}`}
                     data={shown.data}
+                    display={display}
+                    onDisplayChange={(d) => {
+                      restoringTo.current = null // a user change always wins over an unfinished restore
+                      setDisplay(d)
+                    }}
+                    spectrum={shown.spectrum}
                   />
                 )}
               </CardContent>
@@ -514,7 +701,8 @@ export default function App() {
           )}
 
           <p className="mt-4 text-xs text-muted-foreground">
-            Images: NASA SPHEREx via IRSA, background-subtracted and median-stacked per epoch. Orientation: north up,
+            Images: NASA SPHEREx via IRSA, background-subtracted and stacked per epoch (median for curated targets, mean
+            for live views). Orientation: north up,
             east left. A real mover shifts between epochs along the predicted track; artefacts and variable stars
             change brightness without moving.
           </p>

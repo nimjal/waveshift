@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import cutouts, query, stack    # call as module.func so tests can swap them
+from . import cutouts, motion, query, spectral, stack    # call as module.func so tests can swap them
 from .export import reasons_jsonable, to_jsonable
 from .targets import Target
 
@@ -23,7 +23,7 @@ def _subsample(idx: np.ndarray, n: int | None) -> np.ndarray:
 def build_target(target: Target, sources: dict, cache: Path,
                  max_per_group: int | None = None,
                  detectors: list[str] | None = None,
-                 progress=None) -> dict:
+                 progress=None, spectrum: bool = False) -> dict:
     """Full chain for one target. Steps:
     1. center = target.at(sources['spherex']['obs_epoch'])
     2. images = query.find_images(center, collections); filter `detectors` if given;
@@ -48,7 +48,9 @@ def build_target(target: Target, sources: dict, cache: Path,
                                [reasons, flags] (export.reasons_jsonable)}}}]
     Step 6 uses stack.to_grid_reasons (saturation planes = sources['flags']['saturated'])
     and step 7 stack.stack_reasons, so every frame says why its blank pixels are blank.
-    No images -> same keys with epochs = [], detectors = {}, n_images = 0."""
+    No images -> same keys with epochs = [], detectors = {}, n_images = 0.
+    spectrum=True adds key 'spectrum' = the per-exposure samples (spectrum_sidecar) that the
+    CLI writes to a separate file; targets with a known proper motion also get 'motion'."""
     
     sx = sources["spherex"]
     size_px = int(sources["grid"]["size_px"])
@@ -93,12 +95,18 @@ def build_target(target: Target, sources: dict, cache: Path,
     sat = list(flag_cfg.get("saturated", []))
     frames: dict[int, np.ndarray | None] = {}
     blanks: dict[int, stack.Blank | None] = {}
+    waves: dict[int, dict | None] = {}
     for i, p in zip(chosen, paths):
         try:
             frames[i], blanks[i] = stack.to_grid_reasons(p, grid, size_px, bad, sat) if p else (None, None)
         except Exception as e:  # noqa: BLE001
             log.warning("reproject failed for %s: %s", images["obs_id"][i], e)
             frames[i], blanks[i] = None, None
+        if spectrum and frames[i] is not None:
+            try:
+                waves[i] = spectral.exposure_wavelength(p, grid, size_px)
+            except Exception as e:  # noqa: BLE001
+                log.warning("no wavelength for %s: %s", images["obs_id"][i], e)
 
     def frame_out(arrs, bls):
         img, n = stack.stack_epoch(arrs)
@@ -132,6 +140,36 @@ def build_target(target: Target, sources: dict, cache: Path,
                            ("id", "label", "mjd_start", "mjd_end", "year_mid", "n_images")}
                           | {"predicted_px": track, "frames": ep_frames})
 
-    return {**base, "detectors": query.detector_ranges(images),
-            "epochs": epochs_out, "n_images": int(len(images)),
-            "n_used": int(sum(f is not None for f in frames.values()))}
+    out = {**base, "detectors": query.detector_ranges(images),
+           "epochs": epochs_out, "n_images": int(len(images)),
+           "n_used": int(sum(f is not None for f in frames.values()))}
+    if target.pmra or target.pmdec:   # known proper motion: measured vs predicted shift
+        m = motion.measure_motion(out)
+        if m is not None:
+            out["motion"] = m
+    if spectrum:
+        ep_id = {s["index"]: s["id"] for s in query.epoch_summary(images)}
+        out["spectrum"] = spectrum_sidecar(
+            target, size_px, out["units"],
+            [(ep_id[int(images["epoch"][i])], str(images["detector"][i]), str(images["obs_id"][i]),
+              frames[i], blanks[i], waves.get(i)) for i in chosen])
+    return out
+
+
+def spectrum_sidecar(target: Target, size_px: int, units: str, samples: list[tuple]) -> dict:
+    """Per-exposure frames for the on-the-fly spectrum (web: targets/<id>.spectrum.json).
+    samples: (epoch id, detector, obs_id, frame on the grid | None, Blank | None, wave | None).
+    Exposures without a frame or a wavelength are skipped. Wavelength at screen pixel
+    (col, row) = wave[0] + wave[1]*(col - c) + wave[2]*(row - c), c = (size_px - 1) / 2
+    (spectral.grid_wavelength). pixels/reasons use the same orientation and codes as the
+    stacked frames (row 0 = top; null = blank, reasons say why)."""
+    exps = []
+    for ep, det, oid, frame, blank, wave in samples:
+        if frame is None or wave is None or not np.isfinite(frame).any():
+            continue
+        why = reasons_jsonable(blank.codes, blank.names) if blank is not None else {}
+        exps.append({"epoch": ep, "detector": det, "obs_id": oid, "wave": wave["wave"],
+                     "bandwidth": wave["bandwidth"], "pixels": to_jsonable(frame, sig=4),
+                     **({"reasons": why["reasons"]} if "reasons" in why else {})})
+    return {"target": target.id, "size_px": size_px, "units": units, "wave_unit": "um",
+            "wave_origin_px": (size_px - 1) / 2, "exposures": exps}

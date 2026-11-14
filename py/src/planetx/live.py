@@ -28,8 +28,8 @@ import httpx
 import numpy as np
 from astropy.coordinates import SkyCoord
 
-from . import config, cutouts, query, remote, stack, targets
-from .export import write_json
+from . import config, cutouts, query, remote, spectral, stack, targets
+from .export import to_jsonable, write_json
 
 log = logging.getLogger(__name__)
 
@@ -195,18 +195,21 @@ TRANSIENT = (remote.Unavailable, remote.DeadlineExceeded, httpx.TransportError)
 
 
 def _frame_path(url: str, plan: dict, bad: list[str]) -> Path:
-    key = json.dumps([url, plan["center"], plan["size_px"], plan["scale"], bad, "v1"])
-    return config.cache_dir() / "frames" / f"{hashlib.sha1(key.encode()).hexdigest()[:24]}.npy"
+    key = json.dumps([url, plan["center"], plan["size_px"], plan["scale"], bad, "v2"])
+    return config.cache_dir() / "frames" / f"{hashlib.sha1(key.encode()).hexdigest()[:24]}.npz"
 
 
 def _fetch_frame(client: httpx.Client, url: str, plan: dict, grid, bad: list[str],
-                 margin: float, deadline: float) -> np.ndarray:
-    """One exposure -> background-subtracted frame on the plan grid (NaN = no data).
-    Disk-cached as a tiny .npy so a frame fetched after a call's deadline isn't wasted."""
+                 margin: float, deadline: float) -> tuple[np.ndarray, dict | None]:
+    """One exposure -> (background-subtracted frame on the plan grid (NaN = no data),
+    its wavelength plane from spectral.grid_wavelength or None).
+    Disk-cached as a tiny .npz so a frame fetched after a call's deadline isn't wasted."""
     path = _frame_path(url, plan, bad)
     try:
-        return np.load(path).astype(float)
-    except (OSError, ValueError):
+        with np.load(path) as z:
+            w = z["wave"].tolist()
+            return z["frame"].astype(float), ({"wave": w[:3], "bandwidth": w[3]} if len(w) == 4 else None)
+    except (OSError, ValueError, KeyError):
         pass
     center = SkyCoord(*plan["center"], unit="deg")
     size_px, scale = plan["size_px"], plan["scale"]
@@ -214,7 +217,9 @@ def _fetch_frame(client: httpx.Client, url: str, plan: dict, grid, bad: list[str
     try:
         # ZODI skipped: over a 2.5' window it is a near-constant that background
         # subtraction removes anyway (measured: < 3e-5 of frame rms), and it costs 2 round trips.
-        data, wcs = remote.read_window(client, url, center, half, deadline, bad, subtract_zodi=False)
+        data, wcs, spec = remote.read_window(client, url, center, half, deadline, bad,
+                                             subtract_zodi=False, wave=True)
+        wave = _wave_plane(lambda: spectral.grid_wavelength(spec[0], spec[1], wcs, grid, size_px) if spec else None)
     except remote.UnsupportedLayout as e:
         log.info("range read unsupported (%s), using cutout service: %s", e, url)
         left = deadline - time.monotonic()
@@ -226,15 +231,30 @@ def _fetch_frame(client: httpx.Client, url: str, plan: dict, grid, bad: list[str
             raise remote.Unavailable(url)
         r.raise_for_status()
         data, wcs, _ = stack.load_cutout(io.BytesIO(r.content), bad)
+        wave = _wave_plane(lambda: spectral.exposure_wavelength(io.BytesIO(r.content), grid, size_px))
     frame = stack.window_to_grid(data, wcs, grid, size_px)
+    if wave is None:   # e.g. the spectral table timed out: keep the frame, retry the wavelength next time
+        return frame, None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".part.npy")
-        np.save(tmp, frame.astype(np.float32))
+        tmp = path.with_suffix(".part.npz")
+        w = wave["wave"] + [wave["bandwidth"]]
+        with open(tmp, "wb") as fh:
+            np.savez(fh, frame=frame.astype(np.float32), wave=np.array(w, dtype=float))
         tmp.replace(path)
     except OSError as e:
         log.warning("could not cache frame %s: %s", path, e)
-    return frame
+    return frame, wave
+
+
+def _wave_plane(compute) -> dict | None:
+    """Run a wavelength computation; a failure only costs the spectrum, never the frame."""
+    try:
+        w = compute()
+    except Exception as e:  # noqa: BLE001
+        log.info("wavelength unavailable: %s", e)
+        return None
+    return {"wave": w["wave"], "bandwidth": w["bandwidth"]} if w else None
 
 
 def _reason(e: BaseException) -> str:
@@ -293,7 +313,8 @@ def refine(ra: float, dec: float, cursor: str, batch_per_epoch: int, sources: di
             return ("fail", "unavailable") if force else None
         exc = f.exception()
         if exc is None:
-            return ("ok", f.result())
+            res = f.result()     # (frame, wave); a bare frame (tests, older code) has no wave
+            return ("ok", res if isinstance(res, tuple) else (res, None))
         if isinstance(exc, TRANSIENT) and not force:
             return None
         return ("fail", _reason(exc))
@@ -322,6 +343,7 @@ def refine(ra: float, dec: float, cursor: str, batch_per_epoch: int, sources: di
         counts: dict[str, np.ndarray] = {}
         used: dict[str, int] = {}
         failed = []
+        exposures = []   # per-exposure samples for the on-the-fly spectrum
         for k, row in enumerate(committed):
             s = depth + k
             exp = ep["exposures"][s]
@@ -330,11 +352,16 @@ def refine(ra: float, dec: float, cursor: str, batch_per_epoch: int, sources: di
             sums.setdefault(det, np.zeros((size, size)))
             counts.setdefault(det, np.zeros((size, size), dtype=int))
             if kind == "ok":
+                val, wave = val
                 ok = np.isfinite(val)
                 if ok.any():
                     sums[det][ok] += val[ok]
                     counts[det] += ok
                     used[det] = used.get(det, 0) + 1
+                    if wave:
+                        exposures.append({"slot": s, "obs_id": exp["obs_id"], "detector": det,
+                                          "wave": wave["wave"], "bandwidth": wave["bandwidth"],
+                                          "pixels": to_jsonable(val, sig=4)})
                 else:
                     failed.append({"slot": s, "obs_id": exp["obs_id"], "detector": det, "reason": "all_masked"})
             else:
@@ -344,6 +371,7 @@ def refine(ra: float, dec: float, cursor: str, batch_per_epoch: int, sources: di
             "frames": {d: {"sum": _flip_round(sums[d]), "count": np.flipud(counts[d]).tolist(),
                            "n_images": used.get(d, 0)} for d in sums},
             "failed": failed,
+            "exposures": exposures,
         })
 
     new_depth = depth + len(committed)

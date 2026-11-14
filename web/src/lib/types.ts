@@ -66,6 +66,22 @@ export interface Epoch {
   frames: Record<FrameKey, Frame>
 }
 
+/** Measured vs predicted shift of a curated target (planetx/motion.py): a centroid estimate. */
+export interface Motion {
+  measurable: boolean
+  /** first → last epoch, screen px; null when not measurable */
+  measured_px: number | null
+  predicted_px: number
+  /** detector the centroid was measured in, e.g. "D6" */
+  detector: string | null
+  window_px: number
+  min_snr: number
+  from_epoch: string
+  to_epoch: string
+  reason: null | 'saturated' | 'faint' | 'no_data'
+  centroids: { epoch: string; x: number; y: number; snr: number }[]
+}
+
 export interface TargetData {
   target: TargetInfo
   grid: Grid
@@ -77,7 +93,31 @@ export interface TargetData {
   /** wavelength range in µm per detector */
   detectors: Record<string, [number, number]>
   epochs: Epoch[]
+  /** curated targets with a known proper motion only */
+  motion?: Motion
 }
 
 /** Where the currently shown data came from. */
 export type DataSource = { kind: 'curated'; id: string } | { kind: 'custom'; ra: number; dec: number }
+
+/** One exposure's samples for the on-the-fly spectrum (planetx spectrum sidecar / refine). */
+export interface SpectrumExposure {
+  epoch: string
+  detector: string
+  obs_id: string
+  /** wavelength (µm) at screen pixel (col, row) = wave[0] + wave[1]·(col − o) + wave[2]·(row − o),
+   * o = wave_origin_px; from the exposure's spectral WCS (planetx/spectral.py) */
+  wave: [number, number, number]
+  /** channel bandwidth at the field centre, µm */
+  bandwidth: number
+  /** this exposure alone on the grid, row 0 = top, null = blank */
+  pixels: Pixels
+  /** blank reasons, same codes as Frame.reasons (absent: null = 3 / nothing blank) */
+  reasons?: string[]
+}
+
+export interface SpectrumData {
+  size_px: number
+  wave_origin_px: number
+  exposures: SpectrumExposure[]
+}
