@@ -272,3 +272,29 @@ Frontend and repo:
     and `vizier.cds.unistra.fr` all return a "Page unavailable" page). The sky panel therefore
     loads Aladin Lite from jsDelivr and imagery from IRSA's HiPS mirror, and `/resolve` relies on
     the Harvard Sesame mirror.
+
+## Proposed improvements
+
+Proposals only; none of these is implemented. Ranked by value to a hackathon judge per hour of
+work, best first. **UI** items touch only `web/`. **DATA-LAYER** items touch the files marked
+[DATA] above or the numbers they produce, and need Nimit's review. Feature freeze is Sunday 12:00
+Dubai time, so the top of the list is small and safe.
+
+| # | Proposal | Tag | Effort | Risk |
+| --- | --- | --- | --- | --- |
+| 1 | **Draw the measured centroids on the viewer.** `motion.centroids` is already in each target file (`web/src/lib/types.ts:85`) but only the summary number is shown. A small cross per epoch next to the cyan predicted reticle lets a judge see measured against predicted directly. | UI | 1 h | Low: reads existing JSON |
+| 2 | **Page title, description and link preview.** `web/index.html` still says "Planet X · SPHEREx Blink"; add the Waveshift name, Open Graph tags and a preview image so a shared link looks finished. Fix the GitHub homepage field (404) at the same time. | UI | 0.5 h | Very low |
+| 3 | **"What to look for" line per curated target.** The README table has one sentence per target (motion north, brightness change, saturated core). Show it under the title so a judge knows what to watch within five seconds. Text goes in `targets.toml` → `targets.json`, or in a small map in `web/`. | UI | 1 h | Low |
+| 4 | **Download the plotted data as CSV** from the spectrum and light-curve panels. Makes the "real measurements" claim checkable. | UI | 0.75 h | Low |
+| 5 | **Gaia DR3 markers on the blink viewer** (Part D of the current task): Gaia positions propagated to each epoch, with a test against the predicted reticle for Barnard's Star and Eps Indi B. An independent check of the predictions. | DATA-LAYER | 3–4 h | Medium: new build step and API field, schema change |
+| 6 | **Proper motion for name-searched custom positions.** `/resolve` already returns `pmra`/`pmdec`; pass them into the live plan so the reticle follows the object instead of sitting on the field centre (Known gap 5). | DATA-LAYER | 2 h | Medium: changes the plan digest and `predicted_px` for live views |
+| 7 | **Blank-pixel reasons on live frames**, so a saturated star in a live view is hatched like a curated one and `/photometry` can label it correctly (Known gap 3). Fits the `reasons.py` work in progress. | DATA-LAYER | 2–3 h | Medium: adds fields to `/target/refine`, more bytes per call |
+| 8 | **One saturation rule.** Have `motion.py`, `photometry.py` and `render.ts` `coreSaturated` use a single helper and constant from `reasons.py` (Known gap 1). No visible change, but removes a way for the header note and the light-curve label to disagree in front of a judge. | DATA-LAYER | 1.5 h | Medium: must reproduce today's outputs exactly (`annotate` diff should be empty) |
+| 9 | **A curated-versus-live consistency check in the notebook**: run the live path on one curated target and report the per-pixel difference from the curated median. Turns "mean vs median, ZODI skipped" from an assertion into a number for the README. | DATA-LAYER | 1.5 h | Low: test only, needs network |
+| 10 | **CI on push**: a GitHub Action running `oxlint`, `npm run build` and the notebook with `RUN_LIVE = False`. Shows up as a green check on the repo. The cached-cutout sections would need to skip in CI. | UI | 1.5 h | Low, but can eat time on runner setup |
+| 11 | **A committed browser smoke test** (Playwright: load each curated target, switch detector and view, open the panels, assert no console errors at phone and desktop width). Replaces the scripted checks done by hand. | UI | 2 h | Low |
+| 12 | **Small consistency fixes**: one detector-order constant, one `obs_epoch` accessor, one retry list, remove unused `SCHEMA_VERSION`, share `niceTicks`/`fmt`, remove root `data/` leftovers, fill in `pyproject.toml` description (Known gaps 6–9, 11, 14, 16). | DATA-LAYER (py) + UI (web) | 1.5 h | Low each; touches many files, so do it after the freeze |
+| 13 | **Split `App.tsx`** into `useLiveTarget` and `useUrlSync` hooks plus a layout component. Easier to edit, invisible to a judge. | UI | 2–3 h | Medium: the URL and Back/Forward logic is easy to break; after the freeze |
+
+Not proposed: "unknown mover" candidate detection. It is out of scope by decision, and a false
+candidate would cost more credibility than a true one would gain.
