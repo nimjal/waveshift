@@ -1,5 +1,5 @@
 
-# Planet X
+# Waveshift
 data/raw/*
 data/cache/*
 !data/**/.gitkeep

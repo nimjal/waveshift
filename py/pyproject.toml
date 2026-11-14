@@ -2,7 +2,7 @@
 name = "planetx"
 version = "0.1.0"
 license = "MIT"
-description = "Add your description here"
+description = "Waveshift: SPHEREx sky blink pipeline"
 authors = [
     { name = "Nimit Jalan", email = "127307786+nimjal@users.noreply.github.com" }
 ]

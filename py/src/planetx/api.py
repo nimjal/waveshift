@@ -10,7 +10,7 @@ from . import config, live, photometry, targets
 
 log = logging.getLogger(__name__)
 
-app = FastAPI(title="Planet X API")
+app = FastAPI(title="Waveshift API")
 # POST /target/refine sends JSON, so browsers preflight it: allow POST + Content-Type.
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"], allow_headers=["*"])
 

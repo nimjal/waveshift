@@ -749,7 +749,7 @@ export default function App() {
           <Mark className="h-7 w-auto shrink-0" />
           <div className="min-w-0">
             <h1 className="flex flex-wrap items-baseline gap-x-3">
-              <span className="display masthead-name">Planet X</span>
+              <span className="display masthead-name">Waveshift</span>
               <span className="text-sm font-medium text-muted-foreground">SPHEREx blink comparator</span>
             </h1>
           </div>

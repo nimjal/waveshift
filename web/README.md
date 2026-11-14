@@ -1,4 +1,4 @@
-# Planet X · SPHEREx Blink (web)
+# Waveshift · SPHEREx Blink (web)
 
 A blink comparator for SPHEREx sky patches. Pick a curated target or enter any RA/Dec, and the
 player flips between observation epochs on a canvas, so anything that moves (or changes) stands out.
