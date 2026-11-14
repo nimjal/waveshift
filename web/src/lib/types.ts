@@ -36,18 +36,21 @@ export interface Grid {
 /** Row 0 = top. null = no data. */
 export type Pixels = (number | null)[][]
 
-/** Why a pixel is blank: 0 valid, 1 saturated, 2 other flag, 3 no data / unknown. */
-export type ReasonCode = 0 | 1 | 2 | 3
+/** Why a blank pixel is blank: { "<code>": { key, label, rank } } (docs/schema.md). Code 0 =
+ * valid. Labels and priority come from here; only code 1 = saturated is fixed. See lib/reasons.ts. */
+export type ReasonTable = Record<string, { key: string; label: string; rank?: number }>
 
 export interface Frame {
   n_images: number
+  /** exposures that loaded but were entirely blank (their reasons still count) */
+  n_masked?: number
   pixels: Pixels
   flagged_fraction: number
-  /** one string per row (row 0 = top), one digit per pixel. Absent = no reasons known
-   * (older data) or nothing blank: a null pixel then counts as code 3. */
+  /** one string per row (row 0 = top), one digit per pixel = a reason_table code. Absent = no
+   * reasons known (older data) or nothing blank: a null pixel then counts as unexplained. */
   reasons?: string[]
-  /** flag names behind the code-2 pixels, with pixel counts (most common first) */
-  flags?: Record<string, number>
+  /** FLAGS plane behind each other_flag pixel: { PLANE: [[row, col], ...] } (screen coords) */
+  other_flags?: Record<string, [number, number][]>
 }
 
 /** "D1".."D6" or "ALL" (median over every detector, the default view) */
@@ -60,6 +63,8 @@ export interface Epoch {
   mjd_end: number
   year_mid: number
   n_images: number
+  /** exposures in this epoch that were entirely blank */
+  n_masked?: number
   /** where the target should be this epoch, in screen pixels (integers = pixel centres) */
   predicted_px: { x: number; y: number }
   /** a detector with no usable data is omitted */
@@ -155,6 +160,8 @@ export interface TargetData {
   n_used: number
   /** wavelength range in µm per detector */
   detectors: Record<string, [number, number]>
+  /** labels for the codes in every frame's `reasons` (absent in older data: all unexplained) */
+  reason_table?: ReasonTable
   epochs: Epoch[]
   /** curated targets with a known proper motion only */
   motion?: Motion
@@ -177,8 +184,9 @@ export interface SpectrumExposure {
   bandwidth: number
   /** this exposure alone on the grid, row 0 = top, null = blank */
   pixels: Pixels
-  /** blank reasons, same codes as Frame.reasons (absent: null = 3 / nothing blank) */
+  /** blank reasons, same codes as Frame.reasons (absent: null = unexplained / nothing blank) */
   reasons?: string[]
+  other_flags?: Record<string, [number, number][]>
 }
 
 export interface SpectrumData {

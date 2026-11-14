@@ -7,23 +7,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import {
-  availableFrameKeys,
-  FLAGGED_RGB,
-  NO_DATA_RGB,
-  reasonAt,
-  reasonsPresent,
-  reasonText,
-  renderFrames,
-  SATURATED_HATCH,
-  SATURATED_RGB,
-  type Stretch,
-  type ViewMode,
-} from '@/lib/render'
+import { availableFrameKeys, NO_FRAME_RGB, renderFrames, type Stretch, type ViewMode } from '@/lib/render'
+import { drawReasonPatterns, reasonAt, reasonsOf, reasonsPresent, reasonText, swatchBackground } from '@/lib/reasons'
 import { LightCurvePanel } from '@/components/LightCurvePanel'
 import { SpectrumPanel } from '@/components/SpectrumPanel'
 import type { Pick } from '@/lib/spectrum'
-import type { Frame, SpectrumData, TargetData } from '@/lib/types'
+import type { SpectrumData, TargetData } from '@/lib/types'
 import { DEFAULT_DISPLAY, type DisplayState } from '@/lib/url'
 import { cn } from '@/lib/utils'
 
@@ -46,33 +35,6 @@ function formatValue(v: number): string {
 }
 
 const rgb = (c: readonly number[]) => `rgb(${c.join(',')})`
-
-/** Diagonal hatch over saturated (code 1) cells, drawn at display scale. */
-function drawSaturatedHatch(ctx: CanvasRenderingContext2D, frame: Frame | undefined, size: number, cell = CELL) {
-  if (!frame?.reasons) return
-  ctx.save()
-  ctx.beginPath()
-  let any = false
-  for (let r = 0; r < size; r++)
-    for (let c = 0; c < size; c++)
-      if (reasonAt(frame, r, c) === 1) {
-        ctx.rect(c * cell, r * cell, cell, cell)
-        any = true
-      }
-  if (any) {
-    ctx.clip()
-    ctx.strokeStyle = SATURATED_HATCH
-    ctx.lineWidth = 1.5
-    ctx.beginPath()
-    const full = size * cell
-    for (let d = -full; d < full; d += 6) {
-      ctx.moveTo(d, full)
-      ctx.lineTo(d + full, 0)
-    }
-    ctx.stroke()
-  }
-  ctx.restore()
-}
 
 function drawOverlay(
   ctx: CanvasRenderingContext2D,
@@ -212,9 +174,9 @@ async function exportGif(
     const src = canvases[i]
     if (src) {
       ctx.drawImage(src, 0, 0, full, full)
-      drawSaturatedHatch(ctx, e.frames[frameKey], size, GIF_CELL)
+      drawReasonPatterns(ctx, e.frames[frameKey], reasonsOf(data), size, GIF_CELL)
     } else {
-      ctx.fillStyle = rgb(NO_DATA_RGB)
+      ctx.fillStyle = rgb(NO_FRAME_RGB)
       ctx.fillRect(0, 0, full, full)
       ctx.fillStyle = '#fff'
       ctx.font = '13px ui-sans-serif, system-ui, sans-serif'
@@ -338,9 +300,9 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
     const src = rendered.canvases[epochIdx]
     if (src) {
       ctx.drawImage(src, 0, 0, full, full)
-      drawSaturatedHatch(ctx, data.epochs[epochIdx].frames[frameKey], size)
+      drawReasonPatterns(ctx, data.epochs[epochIdx].frames[frameKey], reasonsOf(data), size, CELL)
     } else {
-      ctx.fillStyle = `rgb(${NO_DATA_RGB.join(',')})`
+      ctx.fillStyle = rgb(NO_FRAME_RGB)
       ctx.fillRect(0, 0, full, full)
       ctx.fillStyle = '#fff'
       ctx.font = '15px ui-sans-serif, system-ui, sans-serif'
@@ -391,7 +353,8 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
   const frame = epoch.frames[frameKey]
   const [lo, hi] = rendered.range
   const full = data.grid.size_px * CELL
-  const present = reasonsPresent(frame, data.grid.size_px)
+  const table = reasonsOf(data)
+  const present = reasonsPresent(frame, table, data.grid.size_px)
 
   // hover readout: which sky pixel is under the pointer, and its value or blank reason
   const [hover, setHover] = useState<{ r: number; c: number } | null>(null)
@@ -428,9 +391,9 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
   let hoverText: string | null = null
   if (hover && frame) {
     const v = frame.pixels[hover.r]?.[hover.c]
-    const code = reasonAt(frame, hover.r, hover.c)
+    const why = reasonAt(frame, table, hover.r, hover.c)
     hoverText = `x ${hover.c}, y ${hover.r} · ${
-      code === 0 && typeof v === 'number' ? `${formatValue(v)} MJy/sr` : reasonText(frame, code)
+      why === null && typeof v === 'number' ? `${formatValue(v)} MJy/sr` : reasonText(frame, why ?? table.unexplained, hover.r, hover.c)
     }`
   }
 
@@ -594,27 +557,13 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
             <Crosshair className="size-4" style={{ color: MARKER_COLOR }} />
             Predicted position
           </label>
-          <span className="flex items-center gap-2 text-muted-foreground">
-            <span className="inline-block size-3 rounded-sm border border-border" style={{ background: rgb(NO_DATA_RGB) }} />
-            No data
-          </span>
-          {present.has(1) && (
-            <span className="flex items-center gap-2 text-muted-foreground">
-              <span
-                className="inline-block size-3 rounded-sm border border-border"
-                style={{
-                  background: `repeating-linear-gradient(-45deg, ${SATURATED_HATCH} 0 1.5px, ${rgb(SATURATED_RGB)} 1.5px 4px)`,
-                }}
-              />
-              Saturated
+          {/* only the reasons present in this frame; labels come from the data's reason_table */}
+          {present.map((x) => (
+            <span key={`${x.key}:${x.label}`} className="flex items-center gap-2 text-muted-foreground">
+              <span className="inline-block size-3 rounded-sm border border-border" style={{ background: swatchBackground(x.style) }} />
+              {x.label}
             </span>
-          )}
-          {present.has(2) && (
-            <span className="flex items-center gap-2 text-muted-foreground">
-              <span className="inline-block size-3 rounded-sm border border-border" style={{ background: rgb(FLAGGED_RGB) }} />
-              Flagged{frame?.flags ? ` (${Object.keys(frame.flags).join(', ')})` : ''}
-            </span>
-          )}
+          ))}
           {mode === 'diff' && (
             <span className="flex items-center gap-2 text-muted-foreground">
               <span className="inline-block h-3 w-16 rounded-sm bg-gradient-to-r from-[rgb(60,150,255)] via-black to-[rgb(255,190,60)]" />

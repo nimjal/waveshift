@@ -4,64 +4,20 @@
 // One stretch is computed per (detector, view) across ALL epochs; scaling each frame on
 // its own would make the blink show brightness changes instead of motion.
 
-import type { Frame, Pixels, ReasonCode, TargetData } from './types'
+import { reasonAt, reasonsOf, REASON_STYLES, type RGB } from './reasons'
+import type { Pixels, TargetData } from './types'
 
 export type Stretch = 'linear' | 'sqrt' | 'asinh'
 export type ViewMode = 'blink' | 'diff'
 
-/** Colour used for pixels with no data (null). Distinct from black (= zero signal). */
-export const NO_DATA_RGB: [number, number, number] = [96, 24, 84]
-/** Saturated (code 1): crimson base, plus a hatch the player draws on top. Green is the lowest
- * channel, unlike the amber/blue of the difference map, so it can't read as signal. */
-export const SATURATED_RGB: [number, number, number] = [150, 22, 58]
-export const SATURATED_HATCH = 'rgba(255, 210, 220, 0.75)'
-/** Other quality flag (code 2): green-dominant, a hue neither colour map uses. */
-export const FLAGGED_RGB: [number, number, number] = [38, 104, 56]
-
-const BLANK_RGB: Record<Exclude<ReasonCode, 0>, [number, number, number]> = {
-  1: SATURATED_RGB,
-  2: FLAGGED_RGB,
-  3: NO_DATA_RGB,
-}
-
-/** Reason code for one pixel. A null pixel without a stored reason falls back to 3. */
-export function reasonAt(frame: Frame | undefined, r: number, c: number): ReasonCode {
-  if (!frame) return 3
-  if (cell(frame.pixels, r, c) !== null) return 0
-  const ch = frame.reasons?.[r]?.charCodeAt(c)
-  const code = ch === undefined ? NaN : ch - 48
-  return code === 1 || code === 2 || code === 3 ? code : 3
-}
-
-/** Which reason codes occur in a frame (for the legend). */
-export function reasonsPresent(frame: Frame | undefined, size: number): Set<ReasonCode> {
-  const out = new Set<ReasonCode>()
-  if (!frame) return out
-  for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) out.add(reasonAt(frame, r, c))
-  out.delete(0)
-  return out
-}
-
-/** Short text for hovering a blank pixel. */
-export function reasonText(frame: Frame | undefined, code: ReasonCode): string {
-  switch (code) {
-    case 0:
-      return 'valid'
-    case 1:
-      return 'Saturated: detector overflowed in at least one exposure'
-    case 2: {
-      const names = Object.keys(frame?.flags ?? {})
-      return names.length ? `Flagged by the pipeline: ${names.join(' / ')}` : 'Flagged by the pipeline'
-    }
-    case 3:
-      return 'No data'
-  }
-}
+/** Fill for a whole missing frame ("No D3 data in this epoch"): the not_observed colour. */
+export const NO_FRAME_RGB: RGB = REASON_STYLES.not_observed.rgb
 
 /** True when the target's core is mostly saturated: in most epochs, at least 5 of the 9
- * pixels around the predicted position in the ALL frame are code 1. */
+ * pixels around the predicted position in the ALL frame are saturated. */
 export function coreSaturated(data: TargetData): boolean {
   const size = data.grid.size_px
+  const table = reasonsOf(data)
   let hits = 0
   let seen = 0
   for (const ep of data.epochs) {
@@ -72,7 +28,7 @@ export function coreSaturated(data: TargetData): boolean {
     const cy = Math.round(ep.predicted_px.y)
     let n = 0
     for (let r = cy - 1; r <= cy + 1; r++)
-      for (let c = cx - 1; c <= cx + 1; c++) if (r >= 0 && c >= 0 && r < size && c < size && reasonAt(f, r, c) === 1) n++
+      for (let c = cx - 1; c <= cx + 1; c++) if (r >= 0 && c >= 0 && r < size && c < size && reasonAt(f, table, r, c)?.key === 'saturated') n++
     if (n >= 5) hits++
   }
   return seen > 0 && hits * 2 > seen
@@ -163,7 +119,9 @@ export function renderFrames(data: TargetData, key: string, mode: ViewMode, stre
   const size = data.grid.size_px
   const frames = data.epochs.map((ep) => ep.frames[key])
   const grids = frames.map((f) => f?.pixels ?? null)
-  const blankRgb = (i: number, r: number, c: number) => BLANK_RGB[reasonAt(frames[i], r, c) as 1 | 2 | 3]
+  const table = reasonsOf(data)
+  // a blank pixel is drawn in its reason's colour; unknown/missing reasons -> unexplained
+  const blankRgb = (i: number, r: number, c: number): RGB => (reasonAt(frames[i], table, r, c) ?? table.unexplained).style.rgb
 
   if (mode === 'blink') {
     const all: number[] = []
