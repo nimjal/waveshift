@@ -67,29 +67,59 @@ function CopyLinkButton() {
 
 const NOT_MEASURABLE: Record<NonNullable<Motion['reason']>, string> = {
   saturated: 'the target is saturated in every detector',
+  ambiguous: 'the brightest source jumps between epochs, so it may not be the same object',
   faint: 'the target is too faint to centroid',
   no_data: 'the target has no usable data in some epoch',
 }
 
+function RefStar({ m }: { m: Motion }) {
+  const nt = m.null_test
+  if (!nt) return null
+  return (
+    <>
+      {' · '}
+      <span className="text-foreground">
+        reference star{' '}
+        {nt.measurable && nt.measured_px !== null ? (
+          <strong className="tabular-nums">{nt.measured_px.toFixed(2)} px</strong>
+        ) : (
+          <>not measurable ({nt.reason === 'faint' ? 'too faint' : nt.reason?.replace('_', ' ')})</>
+        )}
+      </span>
+    </>
+  )
+}
+
 function MotionLine({ m }: { m: Motion }) {
+  const nt = m.null_test
+  const how = (
+    <span className="text-muted-foreground">
+      Centroid estimate: {m.window_px}×{m.window_px} px window on each epoch's brightest pixel within{' '}
+      {m.search.radius_px.toFixed(1)} px of the track, in {m.detector ?? 'the reddest usable detector'}.
+      {nt?.measurable && (
+        <>
+          {' '}
+          The reference star (x {nt.x}, y {nt.y}{nt.detector ? `, ${nt.detector}` : ''}) doesn't move, so its
+          shift shows the method's noise floor.
+        </>
+      )}
+    </span>
+  )
   return (
     <span className="text-foreground">
       {m.measurable && m.measured_px !== null ? (
         <>
           Measured shift <strong className="tabular-nums">{m.measured_px.toFixed(2)} px</strong> vs{' '}
           <strong className="tabular-nums">{m.predicted_px.toFixed(2)} px</strong> predicted ({m.from_epoch}→{m.to_epoch}
-          ).{' '}
-          <span className="text-muted-foreground">
-            Centroid estimate: {m.window_px}×{m.window_px} px window in {m.detector}, the reddest detector with peak S/N ≥{' '}
-            {m.min_snr} in every epoch.
-          </span>
+          )<RefStar m={m} />. {how}
         </>
       ) : (
         <>
           Measured shift: <strong>not measurable</strong>{' '}
           <span className="text-muted-foreground">
-            ({m.reason ? NOT_MEASURABLE[m.reason] : 'no usable detector'}; {m.predicted_px.toFixed(2)} px predicted).
+            ({m.reason ? NOT_MEASURABLE[m.reason] : 'no usable detector'}; {m.predicted_px.toFixed(2)} px predicted)
           </span>
+          <RefStar m={m} />.
         </>
       )}
     </span>

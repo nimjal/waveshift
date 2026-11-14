@@ -1,66 +1,206 @@
 """Measured vs predicted motion of a curated target: a centroid estimate.
 
-Method (reconstructs the WISE 0855 notebook check, which gave ~1.45 px measured vs ~1.32 px
-predicted):
-  1. Detector: the LONGEST-wavelength detector (D6 first, then D5, ... D1) in which the target
-     is measurable in EVERY epoch. Cold movers (brown dwarfs) are brightest there, and it
-     avoids blue neighbours: WISE 0855 is invisible below ~3 um, so its D1/D2 frames (and the
-     ALL stack) are pulled toward a nearby star (ALL gives 1.13 px).
-  2. Window: 3 x 3 pixels centred on the epoch's predicted position (rounded to a pixel).
-  3. Measurable in an epoch = all 9 window pixels have data (a saturated or flagged pixel is
-     null in the stacked frame), and peak S/N >= MIN_SNR, where
-       background = median of the whole 25 x 25 frame,
-       noise      = 1.4826 * MAD of the frame (robust sigma),
-       peak S/N   = (max of window - background) / noise.
-  4. Centroid = intensity-weighted mean of pixel centres in the window, weights =
+The measuring window must not depend on the prediction. A centroid is pulled toward the centre
+of its window, so a window that follows the predicted track drags the "measured" shift toward the
+predicted one (a stationary star would appear to move). Here the data decide where to measure:
+
+Method, per detector, in this order: D6, D5, ... D1. The first detector where the target is
+measurable in EVERY epoch is used. Cold movers (brown dwarfs) are brightest at long wavelengths,
+and starting red avoids blue neighbours.
+  1. Search region, the SAME in every epoch: a disc centred on the midpoint of the first and
+     last epochs' predicted positions, radius = half the predicted track length + SEARCH_PAD
+     (3 px). Only pixels inside the grid count.
+  2. Background = median of the whole frame; noise = 1.4826 * MAD of the frame (robust sigma).
+  3. Peak = the brightest valid (non-null) pixel inside the search region, after background
+     subtraction. Peak S/N = (peak - background) / noise must be >= MIN_SNR, else 'faint'.
+  4. Window = 5 x 5 pixels centred on THAT epoch's peak. Any null pixel in it ->
+     'saturated' if its reason code is 1, else 'no_data' (also when the window leaves the grid).
+  5. Centroid = intensity-weighted mean of the window's pixel centres, weights =
      max(pixel - background, 0).
-  5. measured_px  = distance between the first and last epoch's centroids;
+  6. Same-object guard: if the peak jumps between consecutive epochs by more than that step's
+     predicted motion + MAX_EXTRA_JUMP (2 px), the peaks are probably different objects ->
+     'ambiguous' (not measurable) rather than a number.
+  7. measured_px = distance between the first and last epoch's centroids;
      predicted_px = distance between the first and last epoch's predicted positions.
-Everything is in screen pixels of the stacked frames (6.15"/px). A 3 x 3 centroid is biased
-toward the window centre and sensitive to neighbours: an estimate, not astrometry.
+
+Null test (measure_at / null_test): exactly the same code path (detector order included) run on a
+stationary reference star, with predicted motion 0 (every predicted position = the star's pixel).
+The reference star is picked automatically (pick_reference_star) on the epoch-mean ALL frame: the
+brightest isolated local maximum that is >= 5 px from the target's predicted track and from the
+grid edges and has no null pixel in its 5 x 5 window in any epoch. A field with no such star
+(e.g. a bright target's glow or saturated wings everywhere) gets no null test. Its measured shift shows the
+method's noise floor and bias. It should be ~0.
+
+Everything is in screen pixels of the stacked frames (6.15"/px), first vs last epoch. A centroid
+on a 5 x 5 window is still pulled by neighbours and by an undersampled PSF: an estimate, not
+astrometry.
 """
 from __future__ import annotations
 
 import numpy as np
 
 DETECTOR_ORDER = ["D6", "D5", "D4", "D3", "D2", "D1"]
-HALF = 1            # window = (2*HALF+1)^2 = 3 x 3
-MIN_SNR = 3.0       # WISE 0855's weakest D6 epoch is ~4.3
-SATURATED = "1"     # reason code (docs/schema.md)
+HALF = 2              # centroid window = (2*HALF+1)^2 = 5 x 5, centred on the epoch's peak
+SEARCH_PAD = 3.0      # search radius = half the predicted track length + this (px)
+MIN_SNR = 3.0         # on the peak
+MAX_EXTRA_JUMP = 2.0  # peak jump allowed between consecutive epochs beyond the predicted step (px)
+REF_MIN_DIST = 5.0    # reference star: min distance from the target track and the grid edges (px)
+SATURATED = "1"       # reason code (docs/schema.md)
+REASON_ORDER = ("saturated", "ambiguous", "faint", "no_data")   # most telling first
 
 
-def _window(frame: dict, cx: int, cy: int) -> tuple[np.ndarray, list[str]] | None:
-    """3x3 pixel values (NaN = null) and their reason codes, or None if off the grid."""
-    px = frame["pixels"]
-    n = len(px)
-    if cy - HALF < 0 or cx - HALF < 0 or cy + HALF >= n or cx + HALF >= n:
-        return None
-    rows = range(cy - HALF, cy + HALF + 1)
-    vals = np.array([[np.nan if px[r][c] is None else px[r][c] for c in range(cx - HALF, cx + HALF + 1)]
-                     for r in rows], dtype=float)
-    reasons = frame.get("reasons")
-    codes = [reasons[r][cx - HALF:cx + HALF + 1] if reasons else "" for r in rows]
-    return vals, codes
+def _image(frame: dict) -> np.ndarray:
+    """Frame pixels as a float array, null -> NaN (row 0 = top, as stored)."""
+    return np.array([[np.nan if v is None else v for v in row] for row in frame["pixels"]], dtype=float)
 
 
-def _measure_epoch(frame: dict, pred: dict) -> tuple[str, tuple[float, float] | None, float]:
-    """('ok', (x, y), snr) | ('saturated' | 'no_data' | 'faint', None, snr) for one frame."""
-    cx, cy = int(round(pred["x"])), int(round(pred["y"]))
-    win = _window(frame, cx, cy)
-    if win is None:
-        return "no_data", None, 0.0
-    vals, codes = win
-    if np.isnan(vals).any():
-        return ("saturated" if any(SATURATED in row for row in codes) else "no_data"), None, 0.0
-    img = np.array([[np.nan if v is None else v for v in row] for row in frame["pixels"]], dtype=float)
+def _stats(img: np.ndarray) -> tuple[float, float]:
+    """(background, noise): median and 1.4826 * MAD of the frame's valid pixels."""
     bg = float(np.nanmedian(img))
-    noise = 1.4826 * float(np.nanmedian(np.abs(img - bg)))
-    snr = (float(vals.max()) - bg) / noise if noise > 0 else 0.0
+    return bg, 1.4826 * float(np.nanmedian(np.abs(img - bg)))
+
+
+def _region(n: int, centre: tuple[float, float], radius: float) -> np.ndarray:
+    """Boolean (n, n) mask: grid pixels whose centre lies within `radius` of centre (x, y)."""
+    yy, xx = np.mgrid[:n, :n]
+    return np.hypot(xx - centre[0], yy - centre[1]) <= radius
+
+
+def _measure_epoch(frame: dict, region: np.ndarray) -> dict:
+    """One epoch: peak in `region`, then a 5x5 centroid around it.
+    -> {'status': 'ok' | 'faint' | 'saturated' | 'no_data', 'peak': (x, y) | None,
+        'centroid': (x, y) | None, 'snr': float}"""
+    img = _image(frame)
+    n = img.shape[0]
+    bg, noise = _stats(img)
+    cand = np.where(region & np.isfinite(img), img - bg, -np.inf)
+    if not np.isfinite(cand).any():
+        return {"status": "no_data", "peak": None, "centroid": None, "snr": 0.0}
+    py, px = np.unravel_index(int(np.argmax(cand)), cand.shape)
+    snr = float(cand[py, px]) / noise if noise > 0 else 0.0
+    peak = (int(px), int(py))
     if snr < MIN_SNR:
-        return "faint", None, snr
-    w = np.clip(vals - bg, 0, None)
-    yy, xx = np.mgrid[cy - HALF:cy + HALF + 1, cx - HALF:cx + HALF + 1]
-    return "ok", (float((w * xx).sum() / w.sum()), float((w * yy).sum() / w.sum())), snr
+        return {"status": "faint", "peak": peak, "centroid": None, "snr": snr}
+    if py - HALF < 0 or px - HALF < 0 or py + HALF >= n or px + HALF >= n:
+        return {"status": "no_data", "peak": peak, "centroid": None, "snr": snr}
+    win = img[py - HALF:py + HALF + 1, px - HALF:px + HALF + 1]
+    if np.isnan(win).any():
+        reasons = frame.get("reasons")
+        codes = "".join(reasons[r][px - HALF:px + HALF + 1] for r in range(py - HALF, py + HALF + 1)) if reasons else ""
+        return {"status": "saturated" if SATURATED in codes else "no_data", "peak": peak, "centroid": None, "snr": snr}
+    w = np.clip(win - bg, 0, None)
+    yy, xx = np.mgrid[py - HALF:py + HALF + 1, px - HALF:px + HALF + 1]
+    c = (float((w * xx).sum() / w.sum()), float((w * yy).sum() / w.sum()))
+    return {"status": "ok", "peak": peak, "centroid": c, "snr": snr}
+
+
+def _measure(epochs: list[dict], preds: list[tuple[float, float]], detectors: list[str]) -> dict:
+    """Shared code path for the target and the null test. `preds` = predicted (x, y) per epoch
+    (screen px). Returns the JSON-safe result (see measure_motion)."""
+    (x0, y0), (x1, y1) = preds[0], preds[-1]
+    track = float(np.hypot(x1 - x0, y1 - y0))
+    centre = ((x0 + x1) / 2, (y0 + y1) / 2)
+    radius = track / 2 + SEARCH_PAD
+    out = {"predicted_px": round(track, 3), "window_px": 2 * HALF + 1, "min_snr": MIN_SNR,
+           "search": {"x": round(centre[0], 3), "y": round(centre[1], 3), "radius_px": round(radius, 3)},
+           "from_epoch": epochs[0]["id"], "to_epoch": epochs[-1]["id"]}
+    why: set[str] = set()
+    for det in detectors:
+        if not all(det in e["frames"] for e in epochs):
+            continue
+        n = len(epochs[0]["frames"][det]["pixels"])
+        region = _region(n, centre, radius)
+        res = [_measure_epoch(e["frames"][det], region) for e in epochs]
+        bad = {r["status"] for r in res if r["status"] != "ok"}
+        if bad:
+            why |= bad
+            continue
+        # same-object guard: consecutive peaks may only move by the predicted step + 2 px
+        jumps_ok = all(
+            np.hypot(b["peak"][0] - a["peak"][0], b["peak"][1] - a["peak"][1])
+            <= np.hypot(pb[0] - pa[0], pb[1] - pa[1]) + MAX_EXTRA_JUMP
+            for a, b, pa, pb in zip(res, res[1:], preds, preds[1:]))
+        if not jumps_ok:
+            why.add("ambiguous")
+            continue
+        (cx0, cy0), (cx1, cy1) = res[0]["centroid"], res[-1]["centroid"]
+        return {**out, "measurable": True, "detector": det, "reason": None,
+                "measured_px": round(float(np.hypot(cx1 - cx0, cy1 - cy0)), 3),
+                "centroids": [{"epoch": e["id"], "x": round(r["centroid"][0], 3), "y": round(r["centroid"][1], 3),
+                               "peak_x": r["peak"][0], "peak_y": r["peak"][1], "snr": round(r["snr"], 1)}
+                              for e, r in zip(epochs, res)]}
+    reason = next((r for r in REASON_ORDER if r in why), "no_data")
+    return {**out, "measurable": False, "detector": None, "reason": reason,
+            "measured_px": None, "centroids": []}
+
+
+def measure_at(data: dict, x: float, y: float, detectors: list[str] | None = None) -> dict | None:
+    """The same measurement for a STATIONARY source at screen pixel (x, y): every epoch's
+    predicted position is (x, y), so predicted_px = 0. None when there are fewer than 2 epochs."""
+    eps = data.get("epochs", [])
+    if len(eps) < 2:
+        return None
+    return _measure(eps, [(float(x), float(y))] * len(eps), detectors or DETECTOR_ORDER)
+
+
+def _dist_to_segment(px: np.ndarray, py: np.ndarray, a: tuple[float, float], b: tuple[float, float]) -> np.ndarray:
+    """Distance from points (px, py) to the segment a-b (the target's predicted track)."""
+    ax, ay = a
+    dx, dy = b[0] - ax, b[1] - ay
+    L2 = dx * dx + dy * dy
+    t = np.clip(((px - ax) * dx + (py - ay) * dy) / L2, 0, 1) if L2 > 0 else np.zeros_like(px, dtype=float)
+    return np.hypot(px - (ax + t * dx), py - (ay + t * dy))
+
+
+def pick_reference_star(data: dict, key: str) -> tuple[int, int] | None:
+    """A clearly isolated, unsaturated, presumably stationary star in frames[key], as screen
+    pixel (x, y), or None. On the epoch-mean frame: local maxima (>= all 8 neighbours) that are
+      - >= REF_MIN_DIST px from the target's predicted track and from the grid edges,
+      - free of null pixels in their 5 x 5 window in EVERY epoch (unsaturated, covered),
+      - isolated: no other local maximum within 3 px brighter than 30% of this one,
+    and of those the brightest."""
+    eps = data.get("epochs", [])
+    if len(eps) < 2 or not all(key in e["frames"] for e in eps):
+        return None
+    import warnings
+
+    stack = np.stack([_image(e["frames"][key]) for e in eps])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)   # pixels null in every epoch stay NaN
+        mean = np.nanmean(stack, axis=0)
+    n = mean.shape[0]
+    bg, _ = _stats(mean)
+    sig = np.nan_to_num(mean - bg, nan=-np.inf)
+    pad = np.pad(sig, 1, constant_values=-np.inf)
+    neigh = np.max([pad[1 + dy:1 + dy + n, 1 + dx:1 + dx + n]
+                    for dy in (-1, 0, 1) for dx in (-1, 0, 1) if dy or dx], axis=0)
+    yy, xx = np.mgrid[:n, :n]
+    p = [(e["predicted_px"]["x"], e["predicted_px"]["y"]) for e in eps]
+    far = _dist_to_segment(xx, yy, p[0], p[-1]) >= REF_MIN_DIST
+    inside = (xx >= REF_MIN_DIST) & (yy >= REF_MIN_DIST) & (xx <= n - 1 - REF_MIN_DIST) & (yy <= n - 1 - REF_MIN_DIST)
+    is_max = np.isfinite(sig) & (sig > 0) & (sig >= neigh)
+    cands = [(float(sig[y, x]), int(x), int(y)) for y, x in zip(*np.nonzero(is_max & far & inside))]
+    maxima = [(float(sig[y, x]), int(x), int(y)) for y, x in zip(*np.nonzero(is_max))]
+    for s, x, y in sorted(cands, reverse=True):
+        if np.isnan(stack[:, y - HALF:y + HALF + 1, x - HALF:x + HALF + 1]).any():
+            continue
+        if any(0 < np.hypot(x2 - x, y2 - y) <= 3 and s2 > 0.3 * s for s2, x2, y2 in maxima):
+            continue
+        return x, y
+    return None
+
+
+def null_test(data: dict) -> dict | None:
+    """measure_at() on pick_reference_star(data, 'ALL'): the target's code path, predicted motion 0.
+    -> {x, y, measured_px | None, detector, measurable, reason} or None if no star qualifies."""
+    star = pick_reference_star(data, "ALL")
+    if star is None:
+        return None
+    m = measure_at(data, *star)
+    if m is None:
+        return None
+    return {"x": star[0], "y": star[1], "measured_px": m["measured_px"], "detector": m["detector"],
+            "measurable": m["measurable"], "reason": m["reason"]}
 
 
 def measure_motion(data: dict) -> dict | None:
@@ -68,30 +208,14 @@ def measure_motion(data: dict) -> dict | None:
     built target dict (pipeline.build_target output / web target JSON). None when there
     are fewer than 2 epochs. Otherwise a JSON-safe dict:
       measurable, measured_px (or None), predicted_px, detector (or None), window_px, min_snr,
-      from_epoch, to_epoch, reason (None | 'saturated' | 'faint' | 'no_data'),
-      centroids: [{epoch, x, y, snr}] for the chosen detector."""
+      search {x, y, radius_px}, from_epoch, to_epoch,
+      reason (None | 'saturated' | 'ambiguous' | 'faint' | 'no_data'),
+      centroids: [{epoch, x, y, peak_x, peak_y, snr}] for the chosen detector,
+      null_test: {x, y, measured_px, detector, measurable, reason} | None (reference star)."""
     eps = data.get("epochs", [])
     if len(eps) < 2:
         return None
-    p0, p1 = eps[0]["predicted_px"], eps[-1]["predicted_px"]
-    out = {"predicted_px": round(float(np.hypot(p1["x"] - p0["x"], p1["y"] - p0["y"])), 3),
-           "window_px": 2 * HALF + 1, "min_snr": MIN_SNR,
-           "from_epoch": eps[0]["id"], "to_epoch": eps[-1]["id"]}
-    why: set[str] = set()
-    for det in DETECTOR_ORDER:
-        if not all(det in e["frames"] for e in eps):
-            continue
-        res = [_measure_epoch(e["frames"][det], e["predicted_px"]) for e in eps]
-        bad = {r[0] for r in res if r[0] != "ok"}
-        if bad:
-            why |= bad
-            continue
-        (x0, y0), (x1, y1) = res[0][1], res[-1][1]
-        return {**out, "measurable": True, "detector": det, "reason": None,
-                "measured_px": round(float(np.hypot(x1 - x0, y1 - y0)), 3),
-                "centroids": [{"epoch": e["id"], "x": round(r[1][0], 3), "y": round(r[1][1], 3),
-                               "snr": round(r[2], 1)} for e, r in zip(eps, res)]}
-    # nothing measurable: report the most telling reason
-    reason = next((r for r in ("saturated", "faint", "no_data") if r in why), "no_data")
-    return {**out, "measurable": False, "detector": None, "reason": reason,
-            "measured_px": None, "centroids": []}
+    preds = [(e["predicted_px"]["x"], e["predicted_px"]["y"]) for e in eps]
+    m = _measure(eps, preds, DETECTOR_ORDER)
+    m["null_test"] = null_test(data)
+    return m

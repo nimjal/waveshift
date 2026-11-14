@@ -27,9 +27,11 @@ epochs: [{
 
 motion?: {                           # only for targets with a known proper motion (planetx/motion.py)
   measurable, measured_px | null, predicted_px,   # first -> last epoch, screen px
-  detector | null, window_px: 3, min_snr: 3, from_epoch, to_epoch,
-  reason: null | "saturated" | "faint" | "no_data",
-  centroids: [{ epoch, x, y, snr }]                # chosen detector, screen px
+  detector | null, window_px: 5, min_snr: 3, from_epoch, to_epoch,
+  search: { x, y, radius_px },                     # search disc shared by all epochs
+  reason: null | "saturated" | "ambiguous" | "faint" | "no_data",
+  centroids: [{ epoch, x, y, peak_x, peak_y, snr }],   # chosen detector, screen px
+  null_test: null | { x, y, measured_px | null, detector, measurable, reason }   # stationary reference star
 }
 
 ## web/public/data/targets/<id>.spectrum.json   (per-exposure samples, loaded on the first click)

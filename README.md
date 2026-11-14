@@ -24,10 +24,14 @@ objects that move or change brightness, like nearby stars and brown dwarfs, stan
   - **Detector:** `ALL` (median of every detector) or one of D1–D6 (0.75–5.0 µm).
 - A cyan reticle marks where the target should be in each epoch, predicted from its proper motion.
 - **Measured vs predicted motion** (curated targets with a known proper motion): under the title,
-  e.g. "Measured shift 1.46 px vs 1.31 px predicted". A centroid estimate: intensity-weighted
-  centre of a 3×3 px window around each epoch's predicted position, in the reddest detector where
-  the target has peak S/N ≥ 3 in every epoch (`py/src/planetx/motion.py`). Saturated or too-faint
-  targets show "not measurable".
+  e.g. "Measured shift 1.65 px vs 1.31 px predicted · reference star 0.25 px". A centroid estimate
+  that doesn't depend on the prediction: in one search disc shared by all epochs (centred on the
+  track's midpoint, radius = half the track + 3 px), each epoch's brightest pixel is found and a
+  5×5 px intensity-weighted centroid is taken around it, in the reddest detector where the target
+  has peak S/N ≥ 3 in every epoch (`py/src/planetx/motion.py`). Saturated, too-faint or ambiguous
+  targets (the peak jumps more than the predicted step + 2 px) show "not measurable". The same
+  code runs on an isolated stationary star in the field (picked automatically); its "shift" is
+  the method's noise floor.
 - **Spectrum on the fly:** click the target (or any pixel) to plot brightness against wavelength,
   one point per exposure, coloured by epoch. SPHEREx's linear variable filters mean each exposure
   sees a sky position at a different wavelength; each sample's wavelength comes from that
@@ -61,10 +65,10 @@ SPHEREx images covering the position; "used" is how many downloaded and aligned 
 
 | Target | Kind | Epochs | Images (used) | What to look for |
 | --- | --- | --- | --- | --- |
-| Barnard's Star | nearby star | 3: Sep 2025, Apr 2026, Sep 2026 | 358 (358) | **Motion.** Predicted shift ≈ 1.7 px upward (north); measured 1.42 px (D6). |
-| Epsilon Indi B | brown dwarf pair | 4: May 2025, Oct 2025, Apr 2026, Sep 2026 | 458 (458) | **Motion.** Predicted shift ≈ 1.0 px toward lower left (south-east); measured 0.97 px (D6). Epoch D has no D1/D4 data. |
-| WISE 0855-0714 | brown dwarf | 3: May 2025, Nov 2025, May 2026 | 258 (258) | **Motion.** Predicted shift ≈ 1.3 px to the right (west); measured 1.46 px (D6). Only `spherex_dr1` had images. By epoch C it sits on a static blue star, which shows in its spectrum below 2.5 µm. |
-| RW Aurigae | variable star | 3: Sep 2025, Mar 2026, Sep 2026 | 335 (335) | **Brightness change.** It shouldn't move (predicted shift < 0.01 px; measured 0.09 px, D6). |
+| Barnard's Star | nearby star | 3: Sep 2025, Apr 2026, Sep 2026 | 358 (358) | **Motion.** Predicted shift ≈ 1.7 px upward (north); measured 1.68 px (D6); no isolated reference star in the field. |
+| Epsilon Indi B | brown dwarf pair | 4: May 2025, Oct 2025, Apr 2026, Sep 2026 | 458 (458) | **Motion.** Predicted shift ≈ 1.0 px toward lower left (south-east); measured 0.98 px (D6); reference star too faint. Epoch D has no D1/D4 data. |
+| WISE 0855-0714 | brown dwarf | 3: May 2025, Nov 2025, May 2026 | 258 (258) | **Motion.** Predicted shift ≈ 1.3 px to the right (west); measured 1.65 px (D6); reference star (15, 5) 0.25 px in D5. Only `spherex_dr1` had images. By epoch C it sits on a static blue star, which shows in its spectrum below 2.5 µm. |
+| RW Aurigae | variable star | 3: Sep 2025, Mar 2026, Sep 2026 | 335 (335) | **Brightness change.** It shouldn't move (predicted shift < 0.01 px; measured 0.08 px, D6; reference star 0.08 px). |
 | R Draconis | variable star | 3: Jun 2025, Nov 2025, Jun 2026 | 539 (534) | **Brightness change.** It shouldn't move (predicted shift < 0.01 px). Saturated core: shift not measurable. |
 
 Positions and proper motions are in `config/targets.toml`.
@@ -151,7 +155,7 @@ France. This is an independent project and is not endorsed by NASA.
 ## Verification
 
 `notebooks/tests.ipynb` is a self-contained test sheet for the `planetx` package. It runs
-**85 checks in 16 sections**:
+**87 checks in 16 sections**:
 
 | Section | Checks | Covers |
 | --- | --- | --- |
@@ -169,14 +173,14 @@ France. This is an independent project and is not endorsed by NASA.
 | live-e2e | 1 | full `build_target` for WISE 0855, plus a saved epoch plot |
 | reasons | 4 | blank-pixel reasons on real cached cutouts (R Dra saturated, WISE 0855 valid), built JSON |
 | resolve | 4 | Sesame XML parsing (hit, proper motion, not found), curated aliases + propagation to 2025.9, `GET /resolve` 200/404/502/422, live Sesame (Mira ≈ 34.84, −2.98) |
-| motion | 4 | synthetic mover, saturated/faint/single-epoch cases, WISE 0855 ≈ 1.45 vs 1.31 px, R Dra not measurable |
+| motion | 6 | synthetic mover, stationary star with a predicted shift (the bias case), saturated/faint/ambiguous/single-epoch, null test on a stationary star in the WISE 0855 field (< 0.3 px), WISE 0855 within 0.5 px of predicted, R Dra not measurable, old vs new method printed side by side |
 | spectral | 6 | synthetic WAVE-TAB (uneven control points, cutout CRPIX, range, PC rejected), exact match with wcslib on real cutouts (SIP excluded), WISE 0855 wavelengths 0.75–5.0 µm (±0.01) and increasing with detector, sidecar wavelengths inside each exposure's SIA band, refine samples, live range-read == IRSA cutout |
 
 The 6 checks named `LIVE …` need network access; set `RUN_LIVE = False` to skip them. The `reasons`,
 `motion`, `spectral` checks read cached cutouts and the built JSON in `web/public/data`. To run it,
 use the `py/.venv` kernel (`ipykernel` is in the `dev` group) and choose Restart & Run All. Results
 are written to `notebooks/test_output/` (`report.md`, `results.json`, `wise0855_epochs.png`;
-git-ignored). Last full run, live checks included (2026-11-14): 85 of 85 passed.
+git-ignored). Last offline run (2026-11-14): 81 of 81 passed (the 6 `LIVE` checks last passed in the full run before the motion change; they don't touch motion.py).
 
 ## Not yet done
 

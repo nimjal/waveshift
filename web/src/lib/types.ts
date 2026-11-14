@@ -74,12 +74,24 @@ export interface Motion {
   predicted_px: number
   /** detector the centroid was measured in, e.g. "D6" */
   detector: string | null
+  /** centroid window side (px), centred on each epoch's peak */
   window_px: number
   min_snr: number
+  /** the search disc shared by all epochs */
+  search: { x: number; y: number; radius_px: number }
   from_epoch: string
   to_epoch: string
-  reason: null | 'saturated' | 'faint' | 'no_data'
-  centroids: { epoch: string; x: number; y: number; snr: number }[]
+  reason: null | 'saturated' | 'ambiguous' | 'faint' | 'no_data'
+  centroids: { epoch: string; x: number; y: number; peak_x: number; peak_y: number; snr: number }[]
+  /** same measurement on a stationary reference star (predicted 0): the method's noise floor */
+  null_test: null | {
+    x: number
+    y: number
+    measured_px: number | null
+    detector: string | null
+    measurable: boolean
+    reason: Motion['reason']
+  }
 }
 
 export interface TargetData {
