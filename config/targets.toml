@@ -1,0 +1,30 @@
+# Curated targets. Resolved by SIMBAD (`simbad` name, else `name`) incl. proper motion.
+# Give ra/dec (+ optional pmra/pmdec in mas/yr, ref_epoch) to bypass SIMBAD.
+[[target]]
+id = "wise0855"
+name = "WISE 0855-0714"
+simbad = "WISE J085510.83-071442.5"   # brief: 08h55m10.831s -07d14m42.53s
+kind = "brown dwarf"
+
+[[target]]
+id = "barnard"
+name = "Barnard's Star"
+kind = "nearby star"
+
+[[target]]
+id = "eps-indi-b"
+name = "Epsilon Indi B"
+simbad = "eps Ind B"
+kind = "brown dwarf pair"
+
+[[target]]
+id = "rw-aur"
+name = "RW Aurigae"
+simbad = "RW Aur"
+kind = "variable star"
+
+[[target]]
+id = "r-dra"
+name = "R Draconis"
+simbad = "R Dra"
+kind = "variable star"

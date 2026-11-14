@@ -1,0 +1,22 @@
+# Add a new release = add a collection. Pipeline queries all, merges by time.
+[spherex]
+collections = ["spherex_dr1", "spherex_qr3"]
+epoch_gap_days = 30          # gap in t_min that starts a new epoch
+obs_epoch = 2025.9           # decimal year the grid is centred on (mid-baseline)
+pixel_scale_arcsec = 6.15    # fallback if the SIA table lacks s_pixel_scale
+
+[grid]
+size_px = 25                 # odd -> target sits on the centre pixel
+
+[cutout]
+margin = 1.5                 # cutout side = grid side x margin (covers rotation)
+workers = 4                  # parallel downloads (8 got 503s from IRSA)
+
+[flags]
+# Mask-plane names (header keys MP_<NAME>) treated as bad -> NaN.
+# OVERFLOW/NONLINEAR left out on purpose: masking them punches holes in bright stars.
+# NEVER add SOURCE here — it marks real sources.
+bad = ["TRANSIENT", "SUR_ERROR", "NONFUNC", "MISSING_DATA", "HOT", "COLD", "PERSIST"]
+
+[live]
+max_per_group = 4            # images per (epoch, detector) for live requests
