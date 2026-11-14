@@ -632,21 +632,19 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell min-h-svh bg-background text-foreground">
-      <header className="app-header border-b border-border">
-        <div className="mx-auto flex max-w-6xl xl:max-w-[88rem] items-center gap-3 px-4 py-4">
-          <span className="brand-mark">
-            <Orbit className="size-6" />
-          </span>
-          <div>
-            <h1 className="text-lg leading-tight font-semibold">
-              <span className="brand-text">Planet X</span> <span className="text-muted-foreground">·</span> SPHEREx Blink
+    <div className="min-h-svh bg-background text-foreground">
+      <header className="masthead">
+        <div className="mx-auto flex max-w-6xl xl:max-w-[88rem] items-center gap-4 px-4 py-3.5">
+          <div className="min-w-0">
+            <h1 className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="masthead-name">Planet X</span>
+              <span className="text-base font-medium">SPHEREx blink comparator</span>
             </h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="mt-1 text-sm opacity-80">
               Flip between observation epochs. Stars stay put; nearby and moving objects jump.
             </p>
           </div>
-          <div className="ml-auto flex shrink-0 items-center gap-1">
+          <div className="ml-auto flex shrink-0 items-center gap-1 self-center">
             <Button
               size="icon-sm"
               variant="ghost"
@@ -787,7 +785,7 @@ export default function App() {
           {customReady && (
             <div
               role="status"
-              className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-sm"
+              className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm"
             >
               <span>
                 Your custom patch <strong>{customResult.data.target.name}</strong>{' '}
