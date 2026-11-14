@@ -5,7 +5,11 @@
 // per-pixel valid-count image. The server is stateless, so the running sums live here.
 // The server only commits whole rounds (the same slot in every epoch), so every epoch is
 // always at the same depth with the same detector mix: whatever we render blinks fairly.
+// Each delta also carries per-pixel blank reasons; they are folded here with the same rule as
+// the curated stacks (planetx/reasons.py merge: lowest reason_table rank wins), so live views
+// label blank pixels exactly like curated ones.
 
+import { liveFrameReasons, ReasonAcc, reasonsOf } from './reasons'
 import type { Epoch, Frame, SpectrumData, SpectrumExposure, TargetData } from './types'
 
 export interface LiveExposure {
@@ -44,7 +48,19 @@ export interface RefineResponse {
   elapsed_s: number
   epochs: {
     id: string
-    frames: Record<string, { sum: number[][]; count: number[][]; n_images: number }>
+    frames: Record<
+      string,
+      {
+        sum: number[][]
+        count: number[][]
+        n_images: number
+        /** exposures in this delta that were entirely blank (absent from older servers) */
+        n_masked?: number
+        /** folded reason codes of this delta's exposures, 0 = none seen (absent: nothing blank) */
+        reasons?: string[]
+        other_flags?: Record<string, [number, number][]>
+      }
+    >
     failed: LiveFailure[]
     /** per-exposure samples for the spectrum (absent from older servers) */
     exposures?: (Omit<SpectrumExposure, 'epoch'> & { slot: number })[]
@@ -67,6 +83,9 @@ interface Acc {
   sum: Float64Array
   count: Int32Array
   n: number
+  /** fully masked exposures */
+  masked: number
+  why: ReasonAcc
 }
 
 /** Running per-epoch, per-detector sums. Immutable snapshots via toTargetData(). */
@@ -93,13 +112,14 @@ export class LiveStack {
 
   add(res: RefineResponse): void {
     const n = this.plan.grid.size_px
+    const table = reasonsOf(this.plan)
     res.epochs.forEach((ep) => {
       const i = this.plan.epochs.findIndex((e) => e.id === ep.id)
       if (i < 0) return
       for (const [det, f] of Object.entries(ep.frames)) {
         let a = this.acc[i].get(det)
         if (!a) {
-          a = { sum: new Float64Array(n * n), count: new Int32Array(n * n), n: 0 }
+          a = { sum: new Float64Array(n * n), count: new Int32Array(n * n), n: 0, masked: 0, why: new ReasonAcc(n) }
           this.acc[i].set(det, a)
         }
         for (let r = 0; r < n; r++) {
@@ -109,6 +129,8 @@ export class LiveStack {
           }
         }
         a.n += f.n_images
+        a.masked += f.n_masked ?? 0
+        a.why.add(table, f.reasons, f.other_flags)
       }
       this.failures[i].push(...ep.failed)
       for (const x of ep.exposures ?? []) {
@@ -119,6 +141,8 @@ export class LiveStack {
           wave: x.wave,
           bandwidth: x.bandwidth,
           pixels: x.pixels,
+          ...(x.reasons ? { reasons: x.reasons } : {}),
+          ...(x.other_flags ? { other_flags: x.other_flags } : {}),
         })
       }
     })
@@ -127,7 +151,7 @@ export class LiveStack {
     this.done = res.done
   }
 
-  /** Snapshot of the per-exposure samples fetched so far (live frames have no blank reasons). */
+  /** Snapshot of the per-exposure samples fetched so far (with their blank reasons). */
   spectrumData(): SpectrumData {
     const n = this.plan.grid.size_px
     return { size_px: n, wave_origin_px: (n - 1) / 2, exposures: [...this.samples] }
@@ -138,12 +162,19 @@ export class LiveStack {
     return this.failures.reduce((s, f) => s + f.length, 0)
   }
 
-  /** Mean image (sum / count) per detector plus ALL (every detector pooled). */
+  /** Mean image (sum / count) per detector plus ALL (every detector pooled). Blank pixels carry
+   * the folded reasons of every exposure, fully masked ones included (ALL folds all detectors). */
   toTargetData(): TargetData {
     const n = this.plan.grid.size_px
+    const table = reasonsOf(this.plan)
     const frame = (parts: Acc[]): Frame | null => {
       const used = parts.reduce((s, p) => s + p.n, 0)
       if (used === 0) return null
+      let why = parts[0]?.why ?? null
+      if (parts.length > 1) {
+        why = new ReasonAcc(n)
+        for (const p of parts) why.merge(table, p.why)
+      }
       const pixels: (number | null)[][] = []
       let blank = 0
       for (let r = 0; r < n; r++) {
@@ -163,7 +194,14 @@ export class LiveStack {
         }
         pixels.push(row)
       }
-      return { n_images: used, pixels, flagged_fraction: Math.round((blank / (n * n)) * 1e4) / 1e4 }
+      const blankAt = (i: number) => pixels[Math.floor(i / n)][i % n] === null
+      return {
+        n_images: used,
+        n_masked: parts.reduce((s, p) => s + p.masked, 0),
+        pixels,
+        flagged_fraction: Math.round((blank / (n * n)) * 1e4) / 1e4,
+        ...liveFrameReasons(table, why, blankAt, n),
+      }
     }
 
     let nUsed = 0

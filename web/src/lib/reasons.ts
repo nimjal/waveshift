@@ -8,6 +8,9 @@
 
 import type { Frame, ReasonTable, TargetData } from './types'
 
+/** Anything with pixels + reasons: a stacked frame or one spectrum exposure. */
+export type FrameLike = Pick<Frame, 'pixels' | 'reasons' | 'other_flags'>
+
 export type RGB = [number, number, number]
 /** Line pattern drawn over a reason's cells at display scale ('none' = flat colour). */
 export type Pattern = '/' | '\\' | '-' | '|' | 'x' | '+' | 'dots' | 'none'
@@ -100,7 +103,7 @@ function isValue(v: unknown): boolean {
 }
 
 /** Stored code for a pixel: 0 if it has a value, else the digit in `reasons` (-1 if none). */
-export function codeAt(frame: Frame | undefined, r: number, c: number): number {
+export function codeAt(frame: FrameLike | undefined, r: number, c: number): number {
   if (!frame) return -1
   if (isValue(frame.pixels[r]?.[c])) return 0
   const ch = frame.reasons?.[r]?.charCodeAt(c)
@@ -108,14 +111,14 @@ export function codeAt(frame: Frame | undefined, r: number, c: number): number {
 }
 
 /** The reason for a blank pixel, or null for a valid one. Missing/unknown -> unexplained. */
-export function reasonAt(frame: Frame | undefined, table: Reasons, r: number, c: number): Reason | null {
+export function reasonAt(frame: FrameLike | undefined, table: Reasons, r: number, c: number): Reason | null {
   const code = codeAt(frame, r, c)
   if (code === 0) return null
   return code < 0 ? table.unexplained : table.get(code)
 }
 
 /** Reasons occurring in a frame, in table order (for the legend). */
-export function reasonsPresent(frame: Frame | undefined, table: Reasons, size: number): Reason[] {
+export function reasonsPresent(frame: FrameLike | undefined, table: Reasons, size: number): Reason[] {
   const seen = new Set<Reason>()
   if (!frame) return []
   for (let r = 0; r < size; r++)
@@ -133,13 +136,13 @@ const order = (r: Reason) => {
 }
 
 /** Plane behind an other_flag pixel (screen row/col), if the data names one. */
-export function planeAt(frame: Frame | undefined, r: number, c: number): string | null {
+export function planeAt(frame: FrameLike | undefined, r: number, c: number): string | null {
   for (const [name, px] of Object.entries(frame?.other_flags ?? {})) if (px.some(([y, x]) => y === r && x === c)) return name
   return null
 }
 
 /** Hover text for a blank pixel: the label, plus the FLAGS plane for other_flag. */
-export function reasonText(frame: Frame | undefined, reason: Reason, r: number, c: number): string {
+export function reasonText(frame: FrameLike | undefined, reason: Reason, r: number, c: number): string {
   const plane = reason.key === 'other_flag' ? planeAt(frame, r, c) : null
   return plane ? `${reason.label}: ${plane}` : reason.label
 }
@@ -207,7 +210,7 @@ function strokePattern(ctx: CanvasRenderingContext2D, pattern: Pattern, full: nu
 /** Each reason's pattern over its cells, at display scale (the flat colours are in the frame canvas). */
 export function drawReasonPatterns(
   ctx: CanvasRenderingContext2D,
-  frame: Frame | undefined,
+  frame: FrameLike | undefined,
   table: Reasons,
   size: number,
   cell: number,

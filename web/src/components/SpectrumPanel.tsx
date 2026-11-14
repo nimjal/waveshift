@@ -202,11 +202,7 @@ export function SpectrumPanel({ data, spectrum, pick, onClose }: Props) {
     const facet = eps.length > SERIES.length
     const count = (i: number) => samples.filter((s) => s.epoch === i).length
     const label = (s: Sample) => `${eps[s.epoch].id} · ${eps[s.epoch].label} · ${s.detector}`
-    const left = [
-      skipped.saturated && `${skipped.saturated} saturated`,
-      skipped.flagged && `${skipped.flagged} flagged`,
-      skipped.noData && `${skipped.noData} without data`,
-    ].filter(Boolean)
+    const left = skipped.map((x) => `${x.n} ${x.label.toLowerCase()}`)
 
     body = (
       <>

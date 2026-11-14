@@ -1,5 +1,6 @@
 // Sampling the per-exposure spectrum at one pixel (see components/SpectrumPanel.tsx).
 
+import { reasonAt, reasonsOf } from './reasons'
 import type { SpectrumData, TargetData } from './types'
 
 export interface Pick {
@@ -17,7 +18,8 @@ export interface Sample {
   obs_id: string
 }
 
-export type Skipped = { saturated: number; flagged: number; noData: number }
+/** Blank samples left out, per reason label (from the data's reason_table), most first. */
+export type Skipped = { label: string; n: number }[]
 
 /** Every exposure's value + wavelength at the picked pixel. Blank samples are left out and counted. */
 export function sampleSpectrum(spec: SpectrumData, data: TargetData, pick: Pick): { samples: Sample[]; skipped: Skipped } {
@@ -25,7 +27,10 @@ export function sampleSpectrum(spec: SpectrumData, data: TargetData, pick: Pick)
   const o = spec.wave_origin_px
   const n = spec.size_px
   const samples: Sample[] = []
-  const skipped: Skipped = { saturated: 0, flagged: 0, noData: 0 }
+  const table = reasonsOf(data)
+  const left = new Map<string, number>()
+  const skip = (label: string) => left.set(label, (left.get(label) ?? 0) + 1)
+  const outside = table.notObservedCode === null ? table.unexplained : table.get(table.notObservedCode)
   for (const x of spec.exposures) {
     const ei = epochIdx.get(x.epoch)
     if (ei === undefined) continue
@@ -37,15 +42,12 @@ export function sampleSpectrum(spec: SpectrumData, data: TargetData, pick: Pick)
       c = Math.round(p.x)
     }
     if (r < 0 || c < 0 || r >= n || c >= n) {
-      skipped.noData++
+      skip(outside.label) // followed the target off the grid
       continue
     }
     const v = x.pixels[r]?.[c]
     if (typeof v !== 'number' || !Number.isFinite(v)) {
-      const code = x.reasons?.[r]?.charAt(c)
-      if (code === '1') skipped.saturated++
-      else if (code === '2') skipped.flagged++
-      else skipped.noData++
+      skip((reasonAt(x, table, r, c) ?? table.unexplained).label)
       continue
     }
     samples.push({
@@ -57,6 +59,7 @@ export function sampleSpectrum(spec: SpectrumData, data: TargetData, pick: Pick)
     })
   }
   samples.sort((a, b) => a.lam - b.lam)
+  const skipped: Skipped = [...left].map(([label, n]) => ({ label, n })).sort((a, b) => b.n - a.n)
   return { samples, skipped }
 }
 
