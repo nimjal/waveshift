@@ -58,8 +58,10 @@ class RemoteFits:
     def read(self, start: int, stop: int) -> bytes:
         """Bytes [start, stop). Retries 429/5xx/timeouts with 0.5, 1, 2 ... s backoff,
         never past the deadline."""
+
         for attempt in range(self.retries + 1):
             left = self.deadline - time.monotonic()
+
             if left <= 0.2:
                 raise DeadlineExceeded(self.url)
             try:
@@ -76,23 +78,28 @@ class RemoteFits:
             if attempt == self.retries or pause <= 0:
                 break
             time.sleep(pause)
+
         raise Unavailable(self.url)
 
     def header(self, off: int, prefetch: int = BLOCK * 8) -> tuple[fits.Header, int, bytes]:
         """Header starting at byte `off` -> (header, padded header length, raw bytes read).
         The raw bytes may run past the header (handy when the data follows)."""
+
         buf = self.read(off, off + prefetch)
+
         while True:
             found = parse_header(buf)
             if found:
                 return found[0], found[1], buf
             if len(buf) > BLOCK * 200:
                 raise UnsupportedLayout("no END card in header")
+            
             buf += self.read(off + len(buf), off + len(buf) + prefetch)
 
 
 def parse_header(buf: bytes) -> tuple[fits.Header, int] | None:
     """(header, padded length) if buf holds a complete header from its first byte."""
+
     for i in range(0, len(buf) - CARD + 1, CARD):
         if buf[i:i + CARD] == END_CARD:
             return fits.Header.fromstring(buf[:i + CARD].decode("ascii")), _pad(i + CARD)
@@ -100,6 +107,7 @@ def parse_header(buf: bytes) -> tuple[fits.Header, int] | None:
 
 
 def _data_size(h: fits.Header) -> int:
+
     n = h.get("NAXIS", 0)
     if n == 0:
         return 0
@@ -110,6 +118,7 @@ def _data_size(h: fits.Header) -> int:
 def _image_rows(rf: RemoteFits, h: fits.Header, data_off: int,
                 y0: int, y1: int, x0: int, x1: int) -> np.ndarray:
     """Rows y0..y1 (inclusive, 0-based) of an uncompressed float image, cols x0..x1."""
+
     if h.get("BITPIX") != -32 or h.get("NAXIS") != 2:
         raise UnsupportedLayout(f"{h.get('EXTNAME')}: BITPIX={h.get('BITPIX')}")
     nx = h["NAXIS1"]
@@ -124,13 +133,16 @@ def _flag_rows(rf: RemoteFits, h: fits.Header, data_off: int, head: bytes, hlen:
     """Decode rows y0..y1 of the RICE tile-compressed FLAGS extension.
     Reads the tile descriptors + just the heap bytes of those tiles, rebuilds a tiny
     compressed HDU in memory and lets astropy decompress it."""
+
     if not h.get("ZIMAGE") or h.get("TFIELDS") != 1 or h.get("NAXIS1") != 8 \
             or not str(h.get("TFORM1", "")).startswith("1P") \
             or h.get("ZTILE1") != h.get("ZNAXIS1"):
         raise UnsupportedLayout("FLAGS is not one-P-column row-tiled")
+    
     zt2 = int(h.get("ZTILE2", 1))
     t0, t1 = y0 // zt2, y1 // zt2
     ntab = 8 * h["NAXIS2"]
+
     # descriptor table (usually already in the bytes read with the header)
     tab = head[hlen:hlen + ntab]
     if len(tab) < (t1 + 1) * 8:
@@ -145,8 +157,10 @@ def _flag_rows(rf: RemoteFits, h: fits.Header, data_off: int, head: bytes, hlen:
     newdesc = desc.copy()
     newdesc[:, 1] -= lo
     nh = h.copy()
+
     for k in ("THEAP", "CHECKSUM", "DATASUM", "ZHECKSUM", "ZDATASUM"):
         nh.remove(k, ignore_missing=True)
+
     nh["NAXIS2"] = nt
     nh["PCOUNT"] = len(heap)
     nh["ZNAXIS2"] = rows
@@ -154,12 +168,14 @@ def _flag_rows(rf: RemoteFits, h: fits.Header, data_off: int, head: bytes, hlen:
     blob = (fits.PrimaryHDU().header.tostring().encode("ascii")
             + nh.tostring().encode("ascii")
             + data + b"\0" * (_pad(len(data)) - len(data)))
+    
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with fits.open(io.BytesIO(blob)) as hd:
             comp = hd[1]
             arr = np.array(comp.data)
             ihdr = comp.header.copy()
+
     off = y0 - t0 * zt2
     return arr[off:off + (y1 - y0 + 1), x0:x1 + 1], ihdr
 
@@ -170,6 +186,7 @@ def read_window(client: httpx.Client, url: str, coord: SkyCoord, half: int, dead
     """A (2*half+1)^2 window of IMAGE (- ZODI) centred on `coord`, flagged pixels -> NaN,
     plus its celestial WCS. Same result as load_cutout() on an IRSA cutout of that area.
     Raises NoCoverage, UnsupportedLayout, Unavailable, DeadlineExceeded, httpx errors."""
+
     from .stack import bad_mask
 
     rf = RemoteFits(client, url, deadline)
@@ -222,6 +239,7 @@ def read_window(client: httpx.Client, url: str, coord: SkyCoord, half: int, dead
     win["NAXIS1"], win["NAXIS2"] = x1c - x0c + 1, y1c - y0c + 1
     win["CRPIX1"] = h1["CRPIX1"] - x0c
     win["CRPIX2"] = h1["CRPIX2"] - y0c
+    
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", FITSFixedWarning)
         wcs = WCS(win).celestial
