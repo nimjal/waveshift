@@ -1,4 +1,4 @@
-import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, Crosshair, Download, LineChart, Loader2, Pause, Play } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -180,6 +180,8 @@ interface Props {
   spectrum?: { live: SpectrumData } | { load: () => Promise<SpectrumData | null> }
   /** ?embed=1: only the player (canvas, epochs, blink/difference) */
   embed?: boolean
+  /** shown beside the canvas on wide screens and under it otherwise (the sky-context panel) */
+  aside?: ReactNode
 }
 
 /** GIF export: sky pixel -> 14 px, so a 25 px grid is a 350 px square (small file, still legible). */
@@ -267,7 +269,7 @@ function drawPick(ctx: CanvasRenderingContext2D, data: TargetData, epochIdx: num
   ctx.restore()
 }
 
-export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrumProp, embed = false }: Props) {
+export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrumProp, embed = false, aside }: Props) {
   const spectrum = embed ? undefined : spectrumProp
   const frameKeys = useMemo(() => availableFrameKeys(data), [data])
   const nEpochs = data.epochs.length
@@ -432,6 +434,8 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
 
   return (
     <div className="flex flex-col gap-4">
+      {/* canvas, with the aside next to it at the same size on wide screens */}
+      <div className={cn(aside && 'grid grid-cols-1 gap-4 xl:grid-cols-2 xl:items-start')}>
       <div className="mx-auto w-full" style={{ maxWidth: full }}>
         <div className="relative">
           <canvas
@@ -525,6 +529,8 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
             Only one epoch has data here, so there's nothing to blink against yet.
           </p>
         )}
+      </div>
+      {aside}
       </div>
 
       {pick && spectrum && (

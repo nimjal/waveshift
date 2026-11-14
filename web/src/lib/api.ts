@@ -1,7 +1,9 @@
-// Every network call the app makes lives in this module:
+// Every network call the app makes lives in this module (the Aladin Lite viewer in
+// components/SkyContextPanel.tsx loads its own script and survey tiles):
 //   - curated targets: static JSON under <base>/data/
 //   - custom coordinates: the backend API, GET {VITE_API_URL}/target?ra=&dec= (plan)
 //     then POST {VITE_API_URL}/target/refine until done (see lib/live.ts)
+//   - Gaia DR3 sources for the sky-context panel: VizieR, straight from the browser
 
 import { type LivePlan, looksLikePlan, looksLikeRefine, type RefineResponse } from './live'
 import type { Lightcurve, SpectrumData, TargetData, TargetIndexEntry } from './types'
@@ -352,4 +354,87 @@ export function loadCuratedSpectrum(entry: TargetIndexEntry): Promise<SpectrumDa
   spectrumCache.set(entry.id, p)
   p.catch(() => spectrumCache.delete(entry.id))
   return p
+}
+
+// ---------------------------------------------------------------------------
+// Gaia DR3 sources for the sky-context panel. This is the one call that goes from the browser
+// straight to an outside catalogue service (VizieR, table I/355/gaiadr3) rather than to our API.
+
+export interface GaiaSource {
+  /** Gaia DR3 source_id. A 64-bit integer: kept as text, a JS number would round it. */
+  id: string
+  /** ICRS position at epoch 2016.0, degrees */
+  ra: number
+  dec: number
+  gmag: number
+  /** mas/yr (pmra includes cos dec); null when Gaia has no proper motion for the source */
+  pmra: number | null
+  pmdec: number | null
+}
+
+/** Faintest G magnitude and the most sources asked for, so the overlay stays readable. */
+export const GAIA_MAG_LIMIT = 18
+export const GAIA_MAX_SOURCES = 200
+/** VizieR mirrors, tried in order. Harvard first: the CDS host did not answer in Nov 2026. */
+const VIZIER_MIRRORS = ['https://vizier.cfa.harvard.edu', 'https://vizier.cds.unistra.fr']
+const VIZIER_TIMEOUT_MS = 12000
+
+/** Rows of a VizieR `asu-tsv` reply: '#' comment lines, a header line, a units line, a dashed
+ * line, then one tab-separated row per source. */
+export function parseGaiaTsv(text: string): GaiaSource[] {
+  const lines = text.split('\n').filter((l) => l.trim() !== '' && !l.startsWith('#'))
+  const dashes = lines.findIndex((l) => l.startsWith('---'))
+  if (dashes < 2) return []
+  const cols = lines[dashes - 2].split('\t').map((c) => c.trim())
+  const at = (name: string) => cols.indexOf(name)
+  const [iId, iRa, iDec, iG, iPmRa, iPmDec] = ['Source', 'RA_ICRS', 'DE_ICRS', 'Gmag', 'pmRA', 'pmDE'].map(at)
+  if (iId < 0 || iRa < 0 || iDec < 0) return []
+  const num = (v: string | undefined) => (v === undefined || v.trim() === '' ? null : Number(v))
+  const out: GaiaSource[] = []
+  for (const line of lines.slice(dashes + 1)) {
+    const f = line.split('\t')
+    const ra = num(f[iRa])
+    const dec = num(f[iDec])
+    const id = f[iId]?.trim()
+    if (!id || ra === null || dec === null || !Number.isFinite(ra) || !Number.isFinite(dec)) continue
+    out.push({ id, ra, dec, gmag: num(f[iG]) ?? NaN, pmra: num(f[iPmRa]), pmdec: num(f[iPmDec]) })
+  }
+  return out
+}
+
+const gaiaCache = new Map<string, GaiaSource[]>()
+
+/** The brightest Gaia DR3 sources (G < GAIA_MAG_LIMIT, at most GAIA_MAX_SOURCES) in a square
+ * of side `boxArcmin` centred on (ra, dec). Rejects when no mirror answers. */
+export async function fetchGaiaSources(ra: number, dec: number, boxArcmin: number, signal?: AbortSignal): Promise<GaiaSource[]> {
+  const centre = `${ra.toFixed(5)}${dec >= 0 ? '+' : ''}${dec.toFixed(5)}`
+  const key = `${centre}/${boxArcmin}`
+  const hit = gaiaCache.get(key)
+  if (hit) return hit
+  const query =
+    `-source=I/355/gaiadr3&-c=${encodeURIComponent(centre)}&-c.bm=${boxArcmin}x${boxArcmin}` +
+    `&-out=Source,RA_ICRS,DE_ICRS,Gmag,pmRA,pmDE&Gmag=${encodeURIComponent(`<${GAIA_MAG_LIMIT}`)}` +
+    `&-sort=Gmag&-out.max=${GAIA_MAX_SOURCES}`
+  let last: unknown = new Error('no VizieR mirror configured')
+  for (const base of VIZIER_MIRRORS) {
+    const ctrl = new AbortController()
+    const onAbort = () => ctrl.abort()
+    signal?.addEventListener('abort', onAbort)
+    const timer = window.setTimeout(onAbort, VIZIER_TIMEOUT_MS)
+    try {
+      if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
+      const r = await fetch(`${base}/viz-bin/asu-tsv?${query}`, { signal: ctrl.signal })
+      if (!r.ok) throw new Error(`VizieR answered ${r.status}`)
+      const sources = parseGaiaTsv(await r.text())
+      gaiaCache.set(key, sources)
+      return sources
+    } catch (e) {
+      if (signal?.aborted) throw e
+      last = e
+    } finally {
+      window.clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+    }
+  }
+  throw last
 }

@@ -1,8 +1,8 @@
 # Waveshift codebase map
 
 A reading guide for the repo: what each part does, how data moves through it, and where each
-feature lives. Line numbers are as of commit `7943a7f` (14 Nov 2026); every reference also names
-the function, so `grep -n` finds it again after edits.
+feature lives. Line numbers are as of commit `7943a7f` (14 Nov 2026) and drift with later edits;
+every reference also names the function, so `grep -n` finds it again.
 
 **Data layer.** Files marked **[DATA]** hold the astronomy: reading IRSA files, reprojection,
 stacking, blank-pixel reasons, motion, wavelength and photometry. They are written or verified by
@@ -62,11 +62,11 @@ web/                     Vite + React 19 + TypeScript + Tailwind v4 + shadcn/ui
       CustomPanel.tsx    RA/Dec + name search form, API health, live progress, errors
       SpectrumPanel.tsx  spectrum plot for a clicked pixel
       LightCurvePanel.tsx light-curve plot
-      SkyContextPanel.tsx Aladin Lite panel
+      SkyContextPanel.tsx Aladin Lite panel: survey imagery, field outline, Gaia DR3 overlay
       Guide.tsx          first-visit "how to read a blink" dialog
       ui/                shadcn primitives (button, card, tabs, switch, …)
     lib/
-      api.ts             every fetch the app makes (static JSON and the API), error types
+      api.ts             every fetch the app makes (static JSON, the API, Gaia from VizieR)
       live.ts            LiveStack: running sums of refine deltas → TargetData
       render.ts          stretch, colour maps, blink and difference frames
       spectrum.ts        samples a spectrum from per-exposure frames
@@ -120,7 +120,8 @@ IRSA SIA (query.py:48) ── which exposures cover the position, grouped into e
      → TargetHeader (App.tsx:192): name, coordinates, motion line, saturation note
      → BlinkPlayer (components/BlinkPlayer.tsx:270): render.ts:162 renderFrames → canvas
          → SpectrumPanel (click a pixel), LightCurvePanel
-     → SkyContextPanel (components/SkyContextPanel.tsx:118): grid centre + field size only
+         → SkyContextPanel (passed in as BlinkPlayer's `aside`): grid centre, field size,
+           proper motion; fetches Gaia DR3 from VizieR in the browser (lib/api.ts fetchGaiaSources)
 ```
 
 Curated and live data reach the components in the same `TargetData` shape
@@ -160,7 +161,7 @@ The contract is [`docs/schema.md`](docs/schema.md). In short:
 | Embed (`&embed=1`) | — | `App.tsx:566` |
 | Copy link | — | `App.tsx:78` |
 | GIF export | — | `BlinkPlayer.tsx:189` exportGif, `lib/gif.ts:120` |
-| Sky context (Aladin Lite) | — | `components/SkyContextPanel.tsx:118`, mounted at `App.tsx:846` |
+| Sky context (Aladin Lite, Gaia DR3 overlay) | — (VizieR and IRSA HiPS, straight from the browser) | `components/SkyContextPanel.tsx` (`SkyContextPanel`, `createViewer`), `lib/api.ts` `fetchGaiaSources`; built in `App.tsx` (`skyContext`) and placed by `BlinkPlayer`'s `aside` prop |
 | First-visit guide | — | `components/Guide.tsx:57`, `lib/prefs.ts:6` |
 | API-down fallback | `api.py:21` /health | `lib/api.ts:167` checkApiHealth, `CustomPanel.tsx:113`, error copy `CustomPanel.tsx:59`; no-API build `lib/api.ts:14` |
 | Freshness line | `cli.py:57` manifest | `lib/api.ts:148`, `App.tsx:861` |
@@ -252,8 +253,9 @@ Frontend and repo:
 10. **`App.tsx` is 880 lines** and mixes layout, the live refine loop and URL sync.
 11. **`niceTicks` and `fmt` are duplicated** in `SpectrumPanel.tsx:23`/`:33` and
     `LightCurvePanel.tsx:21`/`:27`.
-12. **`lib/api.ts` says every network call lives there**, but `SkyContextPanel.tsx` imports the
-    Aladin script from a CDN on its own.
+12. **`SkyContextPanel.tsx` loads the Aladin script and survey tiles itself**; every other
+    network call is in `lib/api.ts`. The panel keeps one Aladin instance per page in a module
+    variable, because BlinkPlayer remounts per target and Aladin has no destroy call.
 13. **`types.ts` is a hand-written copy of the schema**; nothing checks it against the Python
     output.
 14. **Naming**: the product is Waveshift, the package is `planetx`, the API title is "Planet X
@@ -270,8 +272,8 @@ Frontend and repo:
 19. **No frontend tests, no CI**; the notebook is run by hand.
 20. **CDS is unreachable** (checked 14 Nov 2026: `aladin.cds.unistra.fr`, `alasky.cds.unistra.fr`
     and `vizier.cds.unistra.fr` all return a "Page unavailable" page). The sky panel therefore
-    loads Aladin Lite from jsDelivr and imagery from IRSA's HiPS mirror, and `/resolve` relies on
-    the Harvard Sesame mirror.
+    loads Aladin Lite from jsDelivr, imagery from IRSA's HiPS mirror and Gaia DR3 from the Harvard
+    VizieR mirror, and `/resolve` relies on the Harvard Sesame mirror.
 
 ## Proposed improvements
 

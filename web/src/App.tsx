@@ -563,6 +563,19 @@ export default function App() {
     setSelectedId(null)
   }
 
+  /** Aladin Lite panel for the field on show; BlinkPlayer places it beside or under the canvas */
+  const skyContext = shown && (
+    <SkyContextPanel
+      ra={shown.data.grid.center_ra}
+      dec={shown.data.grid.center_dec}
+      epoch={shown.data.grid.center_epoch}
+      sideDeg={(shown.data.grid.size_px * shown.data.grid.pixel_scale_arcsec) / 3600}
+      name={shown.data.target.name}
+      pmra={shown.data.target.pmra}
+      pmdec={shown.data.target.pmdec}
+    />
+  )
+
   if (embed) {
     const src = shownSource ?? initialUrl.source
     const full = `${window.location.pathname}${toSearch(src, display, false)}`
@@ -620,7 +633,7 @@ export default function App() {
   return (
     <div className="min-h-svh bg-background text-foreground">
       <header className="border-b border-border">
-        <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-4">
+        <div className="mx-auto flex max-w-6xl xl:max-w-[88rem] items-center gap-3 px-4 py-4">
           <Orbit className="size-7 shrink-0 text-primary" />
           <div>
             <h1 className="text-lg leading-tight font-semibold">Planet X · SPHEREx Blink</h1>
@@ -643,7 +656,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-6xl gap-6 px-4 py-6 lg:grid-cols-[340px_1fr]">
+      <main className="mx-auto grid max-w-6xl xl:max-w-[88rem] gap-6 px-4 py-6 lg:grid-cols-[340px_1fr]">
         {/* --- picker --- */}
         <aside>
           <Card>
@@ -808,6 +821,7 @@ export default function App() {
                     <Button size="sm" onClick={showCurated}>
                       Explore curated targets
                     </Button>
+                    <div className="w-full">{skyContext}</div>
                   </div>
                 ) : (
                   <BlinkPlayer
@@ -819,6 +833,7 @@ export default function App() {
                       setDisplay(d)
                     }}
                     spectrum={shown.spectrum}
+                    aside={skyContext}
                   />
                 )}
               </CardContent>
@@ -839,17 +854,6 @@ export default function App() {
                 )}
               </CardContent>
             </Card>
-          )}
-
-          {shown && (
-            <div className="mt-4">
-              <SkyContextPanel
-                ra={shown.data.grid.center_ra}
-                dec={shown.data.grid.center_dec}
-                sideDeg={(shown.data.grid.size_px * shown.data.grid.pixel_scale_arcsec) / 3600}
-                name={shown.data.target.name}
-              />
-            </div>
           )}
 
           <p className="mt-4 text-xs text-muted-foreground">

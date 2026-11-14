@@ -71,9 +71,14 @@ objects that move or change brightness, like nearby stars and brown dwarfs, stan
 - **Download GIF:** exports the current blink (detector, view, stretch, reticle) as a looping
   350 × 350 px GIF with the epoch label burned into each frame, in the browser (~20 KB for 3
   epochs). The encoder is a small built-in one (`web/src/lib/gif.ts`), loaded on first use.
-- **Sky context:** a collapsible Aladin Lite panel under the player, centred on the field, with
-  the 2.56′ blink field outlined (north up) on 2MASS or AllWISE colour imagery. It loads only when
-  opened and stays out of the way if the service can't be reached (see Data sources).
+- **Sky context:** an Aladin Lite panel showing the same patch of sky at higher resolution in
+  2MASS (default), AllWISE or DSS colour, 5′ across, with the 2.56′ blink field outlined (north
+  up, east left) and the target marked. A Gaia DR3 layer (G < 18, the 200 brightest at most) can
+  be switched on and off; clicking a source shows its source ID, G magnitude and proper motion.
+  Gaia positions are for epoch 2016.0, so a fast mover appears offset from its marker; a line
+  joins the two. On screens 1280 px and wider the panel sits beside the blink viewer at the same
+  size. On smaller screens it is a collapsed bar under the viewer and loads only when opened. If a
+  service can't be reached the panel says so and nothing else is affected (see Data sources).
 - **First visit:** a 4-step "how to read a blink" guide (dismissible, remembered per browser,
   reopened with the "?" button). Under the player, a freshness line gives the curated build date
   from `manifest.json` and the IRSA collections live views query.
@@ -192,23 +197,29 @@ writes `web/dist/`. It uses relative paths (`base: './'`), so it can be served f
 - **CDS Sesame** (Strasbourg, falling back to the Harvard mirror): name lookup for the custom tab,
   called by the API (`GET /resolve`), never from the browser. Curated target names are matched
   locally first.
-- **Aladin Lite** (CDS, Strasbourg): the collapsible "Sky context" panel, loaded only when it is
-  opened. The viewer is the CDS team's `aladin-lite` npm build, pinned to 3.8.2 (latest stable)
+- **Aladin Lite** (CDS, Strasbourg; GPL-3): the "Sky context" panel, loaded at run time only when
+  the panel is open and never bundled into this repo. The viewer is the CDS team's `aladin-lite` npm build, pinned to 3.8.2 (latest stable)
   and loaded by the browser from jsDelivr (`cdn.jsdelivr.net/npm/aladin-lite@3.8.2`); the
   `aladin.cds.unistra.fr/AladinLite/api/v3/latest/` script in the Aladin docs returned 404 in
   Nov 2026. Imagery: the CDS **2MASS colour** HiPS (`CDS/P/2MASS/color`, J/H/Ks, default) and
-  **AllWISE colour** HiPS (`CDS/P/allWISE/color`, W1/W2/W4), loaded from IRSA's mirror of them
+  **AllWISE colour** HiPS (`CDS/P/allWISE/color`, W1/W2/W4) and **DSS2 colour** HiPS
+  (`CDS/P/DSS2/color`), loaded from IRSA's mirror of them
   (`irsa.ipac.caltech.edu/data/hips/CDS/...`), because the CDS hosts didn't serve them at the time.
   Aladin's usage logging is turned off. If any of this is unreachable the panel says so and
   nothing else is affected.
-- No other external services are used. Everything above except Aladin Lite is called by the
-  pipeline or the API, not by the browser.
+- **Gaia DR3** (VizieR table `I/355/gaiadr3`): the source overlay in the "Sky context" panel. The
+  browser queries VizieR's `asu-tsv` service, the Harvard mirror (`vizier.cfa.harvard.edu`) first
+  and CDS Strasbourg second, for sources with G < 18 in a 6′ box.
+- No other external services are used. Everything above except Aladin Lite and the Gaia overlay
+  is called by the pipeline or the API, not by the browser.
 
 **Acknowledgements:** This project uses data from the SPHEREx mission, obtained from the
 NASA/IPAC Infrared Science Archive (IRSA), and the SIMBAD database, operated at CDS, Strasbourg,
 France. The sky context panel uses Aladin Lite (Boch & Fernique 2014, ASPC 485, 277) developed
-at CDS, and the 2MASS (Skrutskie et al. 2006) and AllWISE (Wright et al. 2010; Mainzer et al.
-2011) surveys as HiPS. This is an independent project and is not endorsed by NASA.
+at CDS, the 2MASS (Skrutskie et al. 2006) and AllWISE (Wright et al. 2010; Mainzer et al.
+2011) surveys and the Digitized Sky Survey (STScI) as HiPS, the VizieR catalogue access tool
+(CDS), and data from the European Space Agency mission Gaia, processed by the Gaia Data
+Processing and Analysis Consortium (DPAC). This is an independent project and is not endorsed by NASA.
 
 ## Verification
 
@@ -241,19 +252,9 @@ use the `py/.venv` kernel (`ipykernel` is in the `dev` group) and choose Restart
 are written to `notebooks/test_output/` (`report.md`, `results.json`, `wise0855_epochs.png`;
 git-ignored). Last full run (2026-11-14, `RUN_LIVE = True`, ~4 min): 96 of 96 passed, including `LIVE build_target (WISE 0855)`, which now also computes the light curve.
 
-## Not yet done
-
-- Proper motion for custom positions: name search moves the field to the object's current position,
-  but the live view still assumes zero proper motion (the reticle marks the field centre).
-- Frontend tests (the UI was checked with scripted headless-Chromium runs, not committed tests).
-- Demo video URL above is a placeholder.
-
 ## Use of AI
 
-The frontend, API wiring and much of the implementation were built with Claude Code. The data layer
-(planetx, including remote.py and the spectral wavelength code) was reviewed, verified against IRSA's
-cutout service and notebook tests, and partly rewritten by hand. No AI-generated images, logos or NASA
-branding are used.
+The frontend, API wiring and much of the implementation were built with Claude Code assisting. The data layer (planetx, including remote.py and the spectral wavelength code) was reviewed, verified against IRSA's cutout service and notebook tests, and written by hand. No AI-generated images, logos or NASA branding are used.
 
 ## License
 
