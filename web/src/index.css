@@ -49,7 +49,7 @@
 }
 
 :root {
-    --background: oklch(1 0 0);
+    --background: oklch(0.965 0 0);
     --foreground: oklch(0.145 0 0);
     --card: oklch(1 0 0);
     --card-foreground: oklch(0.145 0 0);
@@ -57,22 +57,22 @@
     --popover-foreground: oklch(0.145 0 0);
     --primary: oklch(0.205 0 0);
     --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
+    --secondary: oklch(0.93 0 0);
     --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
+    --muted: oklch(0.94 0 0);
+    --muted-foreground: oklch(0.45 0 0);
+    --accent: oklch(0.94 0 0);
     --accent-foreground: oklch(0.205 0 0);
     --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
+    --border: oklch(0 0 0 / 14%);
+    --input: oklch(0 0 0 / 20%);
+    --ring: oklch(0.45 0 0);
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
+    --radius: 0.375rem;
     --sidebar: oklch(0.985 0 0);
     --sidebar-foreground: oklch(0.145 0 0);
     --sidebar-primary: oklch(0.205 0 0);
@@ -101,11 +101,8 @@
     --card-foreground: oklch(0.985 0 0);
     --popover: oklch(0.205 0 0);
     --popover-foreground: oklch(0.985 0 0);
-    /* The one accent: plate-box yellow. It means "selected" below the masthead and nothing
-       else; hue 98 keeps it greener than the amber used for warnings and Gaia rings, and it
-       is the opposite of the cyan reticle, so interface and sky never share a colour. */
-    --primary: oklch(0.89 0.183 98);
-    --primary-foreground: oklch(0.2 0 0);
+    --primary: oklch(0.985 0 0);
+    --primary-foreground: oklch(0.145 0 0);
     --secondary: oklch(0.269 0 0);
     --secondary-foreground: oklch(0.985 0 0);
     --muted: oklch(0.269 0 0);
@@ -115,8 +112,7 @@
     --destructive: oklch(0.704 0.191 22.216);
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.89 0.183 98 / 65%);
-    --radius: 0.375rem;
+    --ring: oklch(0.708 0 0);
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
@@ -147,9 +143,12 @@
     }
 }
 /* --- identity ------------------------------------------------------------------------
-   One loud thing: a full-width yellow masthead with black type (?embed=1 never renders it).
-   Headings use Archivo at expanded width, which reads like engraved instrument lettering;
-   the working UI stays in Geist. Self-hosted, SIL OFL (see assets/fonts). */
+   The interface is ink: black, white and greys in both modes. Every colour on the page is
+   data (cyan reticle, amber Gaia rings and warnings, chart series, blank-pixel reasons), so
+   nothing in the chrome can be mistaken for a measurement. The one loud thing is the
+   masthead, printed in reverse: a white band in dark mode, a black band in light mode
+   (?embed=1 never renders it). Headings use Archivo at expanded width, which reads like
+   engraved instrument lettering; the working UI stays in Geist. Self-hosted, SIL OFL. */
 @font-face {
   font-family: 'Archivo Variable';
   font-style: normal;
@@ -166,8 +165,8 @@
 }
 
 .masthead {
-  background: var(--primary);
-  color: var(--primary-foreground);
+  background: var(--foreground);
+  color: var(--background);
 }
 .masthead-name {
   font-family: var(--font-heading);
@@ -184,7 +183,7 @@
 }
 .masthead a:hover,
 .masthead button:hover {
-  background: oklch(0 0 0 / 0.1);
+  background: color-mix(in oklch, currentColor 14%, transparent);
   color: inherit;
 }
 .masthead a:focus-visible,
@@ -196,8 +195,8 @@
 }
 
 ::selection {
-  background: var(--primary);
-  color: var(--primary-foreground);
+  background: var(--foreground);
+  color: var(--background);
 }
 
 @keyframes indeterminate {

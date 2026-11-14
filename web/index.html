@@ -4,6 +4,13 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <script>
+      // dark by default (it is a sky viewer); a saved choice wins. Runs before first paint.
+      try {
+        if (localStorage.getItem('waveshift:theme') === 'light') document.documentElement.classList.remove('dark')
+      } catch (e) {}
+    </script>
     <title>Planet X · SPHEREx Blink</title>
     <meta name="description" content="Blink SPHEREx sky images between epochs to spot moving objects." />
   </head>

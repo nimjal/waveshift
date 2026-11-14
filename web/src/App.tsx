@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, CircleHelp, ExternalLink, Info, Link2, Loader2, Orbit, SearchX, Square, TriangleAlert, X } from 'lucide-react'
+import { Check, CircleHelp, ExternalLink, Info, Link2, Loader2, Moon, Orbit, SearchX, Square, Sun, TriangleAlert, X } from 'lucide-react'
 import { Popover } from 'radix-ui'
 
 import { BlinkPlayer } from '@/components/BlinkPlayer'
@@ -28,6 +28,7 @@ import { describeFailures, LiveStack } from '@/lib/live'
 import { coreSaturated, motionPxPerYear } from '@/lib/render'
 import type { DataSource, Motion, SpectrumData, TargetData, TargetIndexEntry } from '@/lib/types'
 import { guideSeen } from '@/lib/prefs'
+import { applyTheme, currentTheme, type Theme } from '@/lib/theme'
 import { copyText, type DisplayState, readUrl, sameSource, toSearch } from '@/lib/url'
 
 type IndexState =
@@ -272,6 +273,12 @@ export default function App() {
   /** first-time visitors get the guided tour once; the "?" button replays it */
   const [tourOpen, setTourOpen] = useState(() => !embed && !guideSeen())
   const closeTour = useCallback(() => setTourOpen(false), [])
+  const [theme, setTheme] = useState<Theme>(() => currentTheme())
+  const toggleTheme = () => {
+    const next: Theme = theme === 'dark' ? 'light' : 'dark'
+    applyTheme(next)
+    setTheme(next)
+  }
 
   const abortRef = useRef<AbortController | null>(null)
   /** the live session (plan + running sums + cursor) so Stop can be resumed */
@@ -645,6 +652,15 @@ export default function App() {
             </p>
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-1 self-center">
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              onClick={toggleTheme}
+            >
+              {theme === 'dark' ? <Sun /> : <Moon />}
+            </Button>
             <Button
               size="icon-sm"
               variant="ghost"

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
-  <rect width="48" height="48" fill="#f5d90a"/>
+  <rect width="48" height="48" fill="#111"/>
   <!-- reticle: four ticks around the mover, as in the player -->
-  <path d="M24 6v9M24 33v9M6 24h9M33 24h9" stroke="#161616" stroke-width="4"/>
-  <circle cx="24" cy="24" r="4.5" fill="#161616"/>
+  <path d="M24 6v9M24 33v9M6 24h9M33 24h9" stroke="#fff" stroke-width="4"/>
+  <circle cx="24" cy="24" r="4.5" fill="#fff"/>
 </svg>
