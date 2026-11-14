@@ -1,5 +1,5 @@
 import { type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronLeft, ChevronRight, Crosshair, Download, LineChart, Loader2, Pause, Play } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, Crosshair, Download, LineChart, Loader2, Pause, Play, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -36,19 +36,35 @@ function formatValue(v: number): string {
 
 const rgb = (c: readonly number[]) => `rgb(${c.join(',')})`
 
+/** Screen pixel (integers = pixel centres, sub-pixel allowed) to canvas px. The one transform
+ * shared by the predicted reticle and the measured-centroid marker. */
+const toCanvas = (p: { x: number; y: number }, cell: number) => [(p.x + 0.5) * cell, (p.y + 0.5) * cell] as const
+
+/** Measured centroids (motion.centroids), when the target has a usable measurement. */
+function measuredCentroids(data: TargetData) {
+  const m = data.motion
+  return m?.measurable && m.centroids.length ? m.centroids : null
+}
+
+/** What the overlay draws on top of the image. */
+interface Marks {
+  predicted: boolean
+  measured: boolean
+}
+
 function drawOverlay(
   ctx: CanvasRenderingContext2D,
   data: TargetData,
   epochIdx: number,
-  showMarker: boolean,
+  marks: Marks,
   cell = CELL,
 ) {
   const size = data.grid.size_px
   const full = size * cell
 
-  if (showMarker) {
+  if (marks.predicted) {
     // faint track through every epoch's predicted position
-    const pts = data.epochs.map((e) => [(e.predicted_px.x + 0.5) * cell, (e.predicted_px.y + 0.5) * cell] as const)
+    const pts = data.epochs.map((e) => toCanvas(e.predicted_px, cell))
     if (pts.length > 1) {
       ctx.strokeStyle = TRACK_COLOR
       ctx.lineWidth = 1.5
@@ -80,6 +96,26 @@ function drawOverlay(
     ctx.moveTo(x, y + gap)
     ctx.lineTo(x, y + gap + len)
     ctx.stroke()
+  }
+
+  // measured centroid of this epoch: a white x on a dark halo, small enough to sit in the
+  // reticle's gap, at its sub-pixel position
+  const c = marks.measured ? measuredCentroids(data)?.find((m) => m.epoch === data.epochs[epochIdx].id) : undefined
+  if (c) {
+    const [x, y] = toCanvas(c, cell)
+    const r = cell * 0.3
+    ctx.lineCap = 'round'
+    for (const [color, width] of [['rgba(0,0,0,0.85)', 4.5], ['#fff', 1.75]] as const) {
+      ctx.strokeStyle = color
+      ctx.lineWidth = width
+      ctx.beginPath()
+      ctx.moveTo(x - r, y - r)
+      ctx.lineTo(x + r, y + r)
+      ctx.moveTo(x - r, y + r)
+      ctx.lineTo(x + r, y - r)
+      ctx.stroke()
+    }
+    ctx.lineCap = 'butt'
   }
 
   // scale bar (bottom left): 30 arcsec
@@ -156,7 +192,7 @@ async function exportGif(
   frameKey: string,
   mode: ViewMode,
   stretch: Stretch,
-  showMarker: boolean,
+  marks: Marks,
   fps: number,
 ) {
   const { encodeGif } = await import('@/lib/gif')
@@ -183,7 +219,7 @@ async function exportGif(
       ctx.textAlign = 'center'
       ctx.fillText(`No ${frameKey} data in this epoch`, full / 2, full / 2)
     }
-    drawOverlay(ctx, data, i, showMarker, GIF_CELL)
+    drawOverlay(ctx, data, i, marks, GIF_CELL)
     // burned-in labels: epoch (top left, like the player) and what is shown (bottom right)
     ctx.font = 'bold 13px ui-monospace, monospace'
     ctx.textAlign = 'left'
@@ -240,6 +276,26 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
   const [playing, setPlaying] = useState(nEpochs > 1)
   const [fps, setFps] = useState(1.5)
   const [showMarker, setShowMarker] = useState(true)
+  const [showMeasured, setShowMeasured] = useState(true)
+  const centroids = useMemo(() => measuredCentroids(data), [data])
+  const marks = useMemo<Marks>(() => ({ predicted: showMarker, measured: showMeasured }), [showMarker, showMeasured])
+
+  // dev check of the marker's placement: canvas distance to the predicted reticle, in pixels
+  useEffect(() => {
+    if (!import.meta.env.DEV || !centroids) return
+    console.info(
+      `[measured centre] ${data.target.name} (${data.motion?.detector}): marker to reticle, px: ` +
+        data.epochs
+          .map((e) => {
+            const c = centroids.find((m) => m.epoch === e.id)
+            if (!c) return `${e.id} none`
+            const [mx, my] = toCanvas(c, CELL)
+            const [px, py] = toCanvas(e.predicted_px, CELL)
+            return `${e.id} ${(Math.hypot(mx - px, my - py) / CELL).toFixed(3)} (dx ${((mx - px) / CELL).toFixed(3)}, dy ${((my - py) / CELL).toFixed(3)})`
+          })
+          .join(' · '),
+    )
+  }, [data, centroids])
   // "More controls" starts open when the link asks for a non-default detector or stretch
   const [showMore, setShowMore] = useState(() => display.det !== DEFAULT_DISPLAY.det || display.stretch !== DEFAULT_DISPLAY.stretch)
   const [pick, setPick] = useState<Pick | null>(null)
@@ -267,14 +323,14 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
   useEffect(() => {
     if (gif !== 'working') return
     let cancelled = false
-    exportGif(data, rendered.canvases, frameKey, mode, stretch, showMarker, fps).then(
+    exportGif(data, rendered.canvases, frameKey, mode, stretch, marks, fps).then(
       (bytes) => !cancelled && setGif(bytes),
       () => !cancelled && setGif('error'),
     )
     return () => {
       cancelled = true
     }
-  }, [gif, data, rendered, frameKey, mode, stretch, showMarker, fps])
+  }, [gif, data, rendered, frameKey, mode, stretch, marks, fps])
 
   // advance frames while playing
   useEffect(() => {
@@ -309,9 +365,9 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
       ctx.textAlign = 'center'
       ctx.fillText(`No ${frameKey} data in this epoch`, full / 2, full / 2)
     }
-    drawOverlay(ctx, data, epochIdx, showMarker)
+    drawOverlay(ctx, data, epochIdx, marks)
     if (pick) drawPick(ctx, data, epochIdx, pick)
-  }, [data, rendered, epochIdx, showMarker, frameKey, pick])
+  }, [data, rendered, epochIdx, marks, frameKey, pick])
 
   const step = useCallback(
     (delta: number) => {
@@ -558,6 +614,13 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
             <Crosshair className="size-4" style={{ color: MARKER_COLOR }} />
             Predicted position
           </label>
+          {centroids && (
+            <label className="flex cursor-pointer items-center gap-2">
+              <Switch checked={showMeasured} onCheckedChange={setShowMeasured} />
+              <X className="size-4 rounded-sm bg-black text-white" strokeWidth={2.5} />
+              Measured centre ({data.motion?.detector})
+            </label>
+          )}
           {/* only the reasons present in this frame; labels come from the data's reason_table */}
           {present.map((x) => (
             <span key={`${x.key}:${x.label}`} className="flex items-center gap-2 text-muted-foreground">
