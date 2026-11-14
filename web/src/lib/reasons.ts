@@ -102,12 +102,13 @@ function isValue(v: unknown): boolean {
   return typeof v === 'number' && Number.isFinite(v)
 }
 
-/** Stored code for a pixel: 0 if it has a value, else the digit in `reasons` (-1 if none). */
+/** Stored code for a pixel: 0 if it has a value, else the digit in `reasons`; -1 when a blank
+ * pixel has no usable reason (none stored, not a digit, or '0' = "valid" on a null pixel). */
 export function codeAt(frame: FrameLike | undefined, r: number, c: number): number {
   if (!frame) return -1
   if (isValue(frame.pixels[r]?.[c])) return 0
   const ch = frame.reasons?.[r]?.charCodeAt(c)
-  return ch === undefined || ch < 48 || ch > 57 ? -1 : ch - 48
+  return ch === undefined || ch < 49 || ch > 57 ? -1 : ch - 48
 }
 
 /** The reason for a blank pixel, or null for a valid one. Missing/unknown -> unexplained. */

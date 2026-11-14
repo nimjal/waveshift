@@ -95,24 +95,27 @@
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-3: #199e70;
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
+    /* Brand accent = the reticle's cyan (#22d3ee), so "the cyan thing" always means "look
+       here". Neutrals carry a faint night-sky tint; chroma stays low enough that the grey
+       blink frames are still judged against an effectively neutral surround. */
+    --background: oklch(0.15 0.014 258);
+    --foreground: oklch(0.985 0.003 258);
+    --card: oklch(0.2 0.017 258);
+    --card-foreground: oklch(0.985 0.003 258);
+    --popover: oklch(0.2 0.017 258);
+    --popover-foreground: oklch(0.985 0.003 258);
+    --primary: oklch(0.8 0.125 212);
+    --primary-foreground: oklch(0.2 0.04 230);
+    --secondary: oklch(0.27 0.02 258);
+    --secondary-foreground: oklch(0.985 0.003 258);
+    --muted: oklch(0.27 0.02 258);
+    --muted-foreground: oklch(0.72 0.02 258);
+    --accent: oklch(0.27 0.02 258);
+    --accent-foreground: oklch(0.985 0.003 258);
     --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
+    --border: oklch(0.85 0.04 258 / 12%);
+    --input: oklch(0.85 0.04 258 / 17%);
+    --ring: oklch(0.8 0.125 212 / 70%);
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
@@ -142,6 +145,65 @@
     @apply font-sans;
     }
 }
+/* --- brand chrome (full app only; ?embed=1 never uses these classes) ---------------- */
+
+/* SPHEREx is a spectrometer, so the brand gradient is a spectrum: cyan → indigo → magenta
+   → amber. Used for the wordmark and the hairline under the header, nowhere near the canvas. */
+:root {
+  --spectrum: linear-gradient(90deg, #22d3ee 0%, #818cf8 38%, #e879f9 68%, #fbbf24 100%);
+}
+
+/* Static glow behind the top of the page. No animation: nothing may move near the blink. */
+.app-shell {
+  background-image:
+    radial-gradient(60rem 22rem at 12% -8rem, oklch(0.8 0.125 212 / 0.13), transparent 70%),
+    radial-gradient(52rem 20rem at 88% -9rem, oklch(0.62 0.2 300 / 0.12), transparent 70%);
+  background-repeat: no-repeat;
+}
+
+.app-header {
+  position: relative;
+  border-bottom-color: transparent;
+  /* a sparse, fixed star field */
+  background-image:
+    radial-gradient(1px 1px at 9% 30%, rgb(255 255 255 / 0.55) 50%, transparent 51%),
+    radial-gradient(1px 1px at 23% 72%, rgb(255 255 255 / 0.35) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 41% 22%, rgb(255 255 255 / 0.45) 50%, transparent 51%),
+    radial-gradient(1px 1px at 58% 64%, rgb(255 255 255 / 0.3) 50%, transparent 51%),
+    radial-gradient(1px 1px at 69% 18%, rgb(255 255 255 / 0.5) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 82% 58%, rgb(255 255 255 / 0.4) 50%, transparent 51%),
+    radial-gradient(1px 1px at 94% 34%, rgb(255 255 255 / 0.45) 50%, transparent 51%);
+}
+.app-header::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 1px;
+  background: var(--spectrum);
+  opacity: 0.7;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.75rem;
+  color: #22d3ee;
+  background: linear-gradient(140deg, oklch(0.8 0.125 212 / 0.2), oklch(0.62 0.2 300 / 0.16));
+  box-shadow:
+    inset 0 0 0 1px oklch(0.8 0.125 212 / 0.35),
+    0 0 22px -4px oklch(0.8 0.125 212 / 0.55);
+}
+
+.brand-text {
+  background: var(--spectrum);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
 @keyframes indeterminate {
   0% { left: -35%; }
   100% { left: 100%; }
