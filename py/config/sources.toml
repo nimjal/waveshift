@@ -13,10 +13,14 @@ margin = 1.5                 # cutout side = grid side x margin (covers rotation
 workers = 4                  # parallel downloads (8 got 503s from IRSA)
 
 [flags]
-# Mask-plane names (header keys MP_<NAME>) treated as bad -> NaN.
+# Mask-plane names as given in each cutout's FLAGS header (MSKNnnnn = name, MSKMnnnn = 1<<n,
+# MSKDnnnn = description), treated as bad -> NaN. Order matters: when a blank pixel has
+# several of these set, the first one listed is reported as the reason.
 # OVERFLOW/NONLINEAR left out on purpose: masking them punches holes in bright stars.
 # NEVER add SOURCE here — it marks real sources.
 bad = ["TRANSIENT", "SUR_ERROR", "NONFUNC", "MISSING_DATA", "HOT", "COLD", "PERSIST"]
+# Planes that mean "saturated" for a BLANK pixel (reason code 1). SPHEREx has no plane named
+# SATURATED; MSKN0001 = 'OVERFLOW' / MSKD0001 = 'Overflow detected during SUR' is the one.
+# Checked first, before `bad`: saturated pixels also carry SUR_ERROR.
+saturated = ["OVERFLOW"]
 
-[live]
-max_per_group = 4            # images per (epoch, detector) for live requests

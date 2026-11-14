@@ -48,6 +48,11 @@ def cache_dir() -> Path:
 
 
 def web_data_dir() -> Path:
-    """<root>/web/public/data (where the frontend reads JSON from)."""
-    
-    return root() / "web" / "public" / "data"
+    """<repo>/web/public/data (where the frontend reads JSON from). root() is py/ (it holds
+    config/), and web/ is its sibling, so look in root() first, then its parent."""
+
+    r = root()
+    for base in (r, r.parent):
+        if (base / "web" / "public").is_dir():
+            return base / "web" / "public" / "data"
+    return r / "web" / "public" / "data"

@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from . import cutouts, query, stack    # call as module.func so tests can swap them
-from .export import to_jsonable
+from .export import reasons_jsonable, to_jsonable
 from .targets import Target
 
 log = logging.getLogger(__name__)
@@ -44,7 +44,10 @@ def build_target(target: Target, sources: dict, cache: Path,
       units, generated_at (UTC ISO), collections, detectors (query.detector_ranges),
       n_images, n_used,
       epochs: [{id, label, mjd_start, mjd_end, year_mid, n_images, predicted_px: {x, y},
-                frames: {DET: {n_images, pixels (export.to_jsonable), flagged_fraction}}}]
+                frames: {DET: {n_images, pixels (export.to_jsonable), flagged_fraction,
+                               [reasons, flags] (export.reasons_jsonable)}}}]
+    Step 6 uses stack.to_grid_reasons (saturation planes = sources['flags']['saturated'])
+    and step 7 stack.stack_reasons, so every frame says why its blank pixels are blank.
     No images -> same keys with epochs = [], detectors = {}, n_images = 0."""
     
     sx = sources["spherex"]
@@ -85,32 +88,43 @@ def build_target(target: Target, sources: dict, cache: Path,
     urls = [cutouts.cutout_url(images["access_url"][i], center, size_deg) for i in chosen]
     paths = cutouts.fetch_many(urls, cache, int(sources["cutout"].get("workers", 4)), progress)
 
-    bad = list(sources.get("flags", {}).get("bad", []))
+    flag_cfg = sources.get("flags", {})
+    bad = list(flag_cfg.get("bad", []))
+    sat = list(flag_cfg.get("saturated", []))
     frames: dict[int, np.ndarray | None] = {}
+    blanks: dict[int, stack.Blank | None] = {}
     for i, p in zip(chosen, paths):
         try:
-            frames[i] = stack.to_grid(p, grid, size_px, bad) if p else None
+            frames[i], blanks[i] = stack.to_grid_reasons(p, grid, size_px, bad, sat) if p else (None, None)
         except Exception as e:  # noqa: BLE001
             log.warning("reproject failed for %s: %s", images["obs_id"][i], e)
-            frames[i] = None
+            frames[i], blanks[i] = None, None
+
+    def frame_out(arrs, bls):
+        img, n = stack.stack_epoch(arrs)
+        if img is None:
+            return None
+        why = stack.stack_reasons(img, arrs, bls)
+        return {"n_images": n, "pixels": to_jsonable(img),
+                "flagged_fraction": round(float(np.isnan(img).mean()), 4),
+                **(reasons_jsonable(why.codes, why.names) if why else {})}
 
     epochs_out = []
     for summ in query.epoch_summary(images):
         ep = summ["index"]
-        ep_frames, all_arrs = {}, []
+        ep_frames, all_arrs, all_bls = {}, [], []
         for det in sorted(set(images["detector"])):
             idx = [i for i in chosen if images["epoch"][i] == ep and images["detector"][i] == det]
-            arrs = [frames[i] for i in idx]
-            img, n = stack.stack_epoch(arrs)
-            if img is None:
+            arrs, bls = [frames[i] for i in idx], [blanks[i] for i in idx]
+            f = frame_out(arrs, bls)
+            if f is None:
                 continue
-            all_arrs.extend(a for a in arrs if a is not None)
-            ep_frames[det] = {"n_images": n, "pixels": to_jsonable(img),
-                              "flagged_fraction": round(float(np.isnan(img).mean()), 4)}
-        img, n = stack.stack_epoch(all_arrs)
-        if img is not None:
-            ep_frames["ALL"] = {"n_images": n, "pixels": to_jsonable(img),
-                                "flagged_fraction": round(float(np.isnan(img).mean()), 4)}
+            all_arrs.extend(arrs)
+            all_bls.extend(bls)
+            ep_frames[det] = f
+        f = frame_out(all_arrs, all_bls)
+        if f is not None:
+            ep_frames["ALL"] = f
         # where the target SHOULD be this epoch, in screen pixels (row 0 = top)
         x, y = grid.world_to_pixel(target.at(summ["year_mid"]))
         track = {"x": round(float(x), 3), "y": round(float(size_px - 1 - y), 3)}

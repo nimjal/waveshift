@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, Crosshair, Pause, Play } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -7,8 +7,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { availableFrameKeys, NO_DATA_RGB, renderFrames, type Stretch, type ViewMode } from '@/lib/render'
-import type { TargetData } from '@/lib/types'
+import {
+  availableFrameKeys,
+  FLAGGED_RGB,
+  NO_DATA_RGB,
+  reasonAt,
+  reasonsPresent,
+  reasonText,
+  renderFrames,
+  SATURATED_HATCH,
+  SATURATED_RGB,
+  type Stretch,
+  type ViewMode,
+} from '@/lib/render'
+import type { Frame, TargetData } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 /** CSS pixels per sky pixel at full size (25 px grid → 500 px canvas). */
@@ -18,7 +30,7 @@ const MARKER_COLOR = '#22d3ee' // cyan-400
 const TRACK_COLOR = 'rgba(34, 211, 238, 0.45)'
 
 function detectorLabel(key: string, data: TargetData): string {
-  if (key === 'ALL') return 'All detectors (median)'
+  if (key === 'ALL') return 'All detectors (stacked)'
   const range = data.detectors[key]
   return range ? `${key} · ${range[0].toFixed(2)}–${range[1].toFixed(2)} µm` : key
 }
@@ -27,6 +39,35 @@ function formatValue(v: number): string {
   const a = Math.abs(v)
   if (a !== 0 && (a < 0.01 || a >= 1000)) return v.toExponential(1)
   return v.toPrecision(3)
+}
+
+const rgb = (c: readonly number[]) => `rgb(${c.join(',')})`
+
+/** Diagonal hatch over saturated (code 1) cells, drawn at display scale. */
+function drawSaturatedHatch(ctx: CanvasRenderingContext2D, frame: Frame | undefined, size: number) {
+  if (!frame?.reasons) return
+  ctx.save()
+  ctx.beginPath()
+  let any = false
+  for (let r = 0; r < size; r++)
+    for (let c = 0; c < size; c++)
+      if (reasonAt(frame, r, c) === 1) {
+        ctx.rect(c * CELL, r * CELL, CELL, CELL)
+        any = true
+      }
+  if (any) {
+    ctx.clip()
+    ctx.strokeStyle = SATURATED_HATCH
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    const full = size * CELL
+    for (let d = -full; d < full; d += 6) {
+      ctx.moveTo(d, full)
+      ctx.lineTo(d + full, 0)
+    }
+    ctx.stroke()
+  }
+  ctx.restore()
 }
 
 function drawOverlay(
@@ -168,6 +209,7 @@ export function BlinkPlayer({ data }: Props) {
     const src = rendered.canvases[epochIdx]
     if (src) {
       ctx.drawImage(src, 0, 0, full, full)
+      drawSaturatedHatch(ctx, data.epochs[epochIdx].frames[frameKey], size)
     } else {
       ctx.fillStyle = `rgb(${NO_DATA_RGB.join(',')})`
       ctx.fillRect(0, 0, full, full)
@@ -219,6 +261,25 @@ export function BlinkPlayer({ data }: Props) {
   const frame = epoch.frames[frameKey]
   const [lo, hi] = rendered.range
   const full = data.grid.size_px * CELL
+  const present = reasonsPresent(frame, data.grid.size_px)
+
+  // hover readout: which sky pixel is under the pointer, and its value or blank reason
+  const [hover, setHover] = useState<{ r: number; c: number } | null>(null)
+  const onPointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const box = e.currentTarget.getBoundingClientRect()
+    const n = data.grid.size_px
+    const c = Math.floor(((e.clientX - box.left) / box.width) * n)
+    const r = Math.floor(((e.clientY - box.top) / box.height) * n)
+    setHover(r >= 0 && c >= 0 && r < n && c < n ? { r, c } : null)
+  }
+  let hoverText: string | null = null
+  if (hover && frame) {
+    const v = frame.pixels[hover.r]?.[hover.c]
+    const code = reasonAt(frame, hover.r, hover.c)
+    hoverText = `x ${hover.c}, y ${hover.r} · ${
+      code === 0 && typeof v === 'number' ? `${formatValue(v)} MJy/sr` : reasonText(frame, code)
+    }`
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -229,10 +290,17 @@ export function BlinkPlayer({ data }: Props) {
             className="block aspect-square w-full rounded-md border border-border bg-black"
             role="img"
             aria-label={`${data.target.name}, epoch ${epoch.label}, ${detectorLabel(frameKey, data)}`}
+            onPointerMove={onPointerMove}
+            onPointerLeave={() => setHover(null)}
           />
           <div className="pointer-events-none absolute top-2 left-2 rounded bg-black/60 px-2 py-1 font-mono text-sm text-white">
             {epoch.id} · {epoch.label}
           </div>
+          {hoverText && (
+            <div className="pointer-events-none absolute right-2 bottom-2 max-w-[70%] rounded bg-black/70 px-2 py-1 text-right font-mono text-xs text-white">
+              {hoverText}
+            </div>
+          )}
         </div>
 
         {/* epoch timeline */}
@@ -362,12 +430,26 @@ export function BlinkPlayer({ data }: Props) {
           Predicted position
         </label>
         <span className="flex items-center gap-2 text-muted-foreground">
-          <span
-            className="inline-block size-3 rounded-sm border border-border"
-            style={{ background: `rgb(${NO_DATA_RGB.join(',')})` }}
-          />
+          <span className="inline-block size-3 rounded-sm border border-border" style={{ background: rgb(NO_DATA_RGB) }} />
           No data
         </span>
+        {present.has(1) && (
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <span
+              className="inline-block size-3 rounded-sm border border-border"
+              style={{
+                background: `repeating-linear-gradient(-45deg, ${SATURATED_HATCH} 0 1.5px, ${rgb(SATURATED_RGB)} 1.5px 4px)`,
+              }}
+            />
+            Saturated
+          </span>
+        )}
+        {present.has(2) && (
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <span className="inline-block size-3 rounded-sm border border-border" style={{ background: rgb(FLAGGED_RGB) }} />
+            Flagged{frame?.flags ? ` (${Object.keys(frame.flags).join(', ')})` : ''}
+          </span>
+        )}
         {mode === 'diff' && (
           <span className="flex items-center gap-2 text-muted-foreground">
             <span className="inline-block h-3 w-16 rounded-sm bg-gradient-to-r from-[rgb(60,150,255)] via-black to-[rgb(255,190,60)]" />

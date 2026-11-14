@@ -1,6 +1,17 @@
 # Curated targets. Values from SIMBAD (Harvard mirror, 14 Nov 2026): J2000 position,
 # proper motion in mas/yr (pmra includes cos dec). Explicit values = no SIMBAD at build time.
 [[target]]
+id = "eps-indi-b"
+name = "Epsilon Indi B"
+simbad = "eps Ind B"
+kind = "brown dwarf pair"
+ra = 331.04415
+dec = -56.78284
+pmra = 3981.977
+pmdec = -2466.832
+ref_epoch = 2000.0
+
+[[target]]
 id = "wise0855"
 name = "WISE 0855-0714"
 simbad = "WISE J085510.83-071442.5"
@@ -20,17 +31,6 @@ ra = 269.45208
 dec = 4.69336
 pmra = -801.551
 pmdec = 10362.394
-ref_epoch = 2000.0
-
-[[target]]
-id = "eps-indi-b"
-name = "Epsilon Indi B"
-simbad = "eps Ind B"
-kind = "brown dwarf pair"
-ra = 331.04415
-dec = -56.78284
-pmra = 3981.977
-pmdec = -2466.832
 ref_epoch = 2000.0
 
 [[target]]

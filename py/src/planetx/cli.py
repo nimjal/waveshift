@@ -21,15 +21,18 @@ def build(only: list[str] | None = None) -> None:
     Call them as module attributes (targets.resolve, build_target) so they can be swapped in tests.
     One target failing prints ✗ and continues.
     Then write targets.json (list of {id, name, kind, file: 'targets/<id>.json', n_epochs},
-    MERGED with any existing entries) and manifest.json {generated_at, collections, counts}."""
+    MERGED with any existing entries, ordered as in targets.toml, unknown ids last) and
+    manifest.json {generated_at, collections, counts} (counts also MERGED, so building one
+    target doesn't drop the others)."""
 
     sources = config.load_sources()
     out = config.web_data_dir()
     index_path, manifest_path = out / "targets.json", out / "manifest.json"
     index = {e["id"]: e for e in (json.loads(index_path.read_text()) if index_path.exists() else [])}
-    counts = {}
+    counts = json.loads(manifest_path.read_text()).get("counts", {}) if manifest_path.exists() else {}
+    cfgs = config.load_targets()
 
-    for cfg in config.load_targets():
+    for cfg in cfgs:
         if only and cfg["id"] not in only:
             continue
         print(f"▶ {cfg['id']} — {cfg['name']}", flush=True)
@@ -46,7 +49,8 @@ def build(only: list[str] | None = None) -> None:
                         "epochs": len(data["epochs"])}
         print(f"  ✓ {len(data['epochs'])} epochs, {data['n_images']} images", flush=True)
     
-    write_json(index_path, list(index.values()))
+    rank = {c["id"]: n for n, c in enumerate(cfgs)}
+    write_json(index_path, sorted(index.values(), key=lambda e: rank.get(e["id"], len(rank))))
     write_json(manifest_path, {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "collections": sources["spherex"]["collections"],

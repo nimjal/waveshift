@@ -1,7 +1,0 @@
-# Add a new release = add a collection. Pipeline queries all, merges by time.
-[spherex]
-collections = ["spherex_dr1", "spherex_qr3"]
-epoch_gap_days = 30          # gap in t_min that starts a new epoch
-
-[cutout]
-size_deg = 0.0333            # ~2 arcmin; verify units against a real cutout

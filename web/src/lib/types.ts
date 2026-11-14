@@ -36,10 +36,18 @@ export interface Grid {
 /** Row 0 = top. null = no data. */
 export type Pixels = (number | null)[][]
 
+/** Why a pixel is blank: 0 valid, 1 saturated, 2 other flag, 3 no data / unknown. */
+export type ReasonCode = 0 | 1 | 2 | 3
+
 export interface Frame {
   n_images: number
   pixels: Pixels
   flagged_fraction: number
+  /** one string per row (row 0 = top), one digit per pixel. Absent = no reasons known
+   * (older data) or nothing blank: a null pixel then counts as code 3. */
+  reasons?: string[]
+  /** flag names behind the code-2 pixels, with pixel counts (most common first) */
+  flags?: Record<string, number>
 }
 
 /** "D1".."D6" or "ALL" (median over every detector, the default view) */

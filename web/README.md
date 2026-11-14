@@ -31,14 +31,15 @@ and curated targets still work.
 - `public/data/targets.json`: the curated list, and `public/data/targets/<id>.json`: one file per
   target (see `docs/schema.md`). Both are written by `just build` in the repo root.
   If `targets.json` is missing the app shows "No curated targets found".
-- `GET {VITE_API_URL}/target?ra=&dec=` returns the same per-target shape. A new position can take
-  minutes (the server fetches cutouts from IRSA); repeated positions are cached server-side.
+- `GET {VITE_API_URL}/target?ra=&dec=` returns a refinement plan, then `POST {VITE_API_URL}/target/refine`
+  returns per-call sum/count deltas until done. `src/lib/live.ts` accumulates them into the same
+  per-target shape (see `docs/schema.md` → "Live API").
 
 ## Code map
 
 | File | What it does |
 | --- | --- |
-| `src/lib/api.ts` | **All** network calls: static curated JSON, `/health`, `/target`, and error classification |
+| `src/lib/api.ts` | **All** network calls: static curated JSON, `/health`, `/target`, `/target/refine`, and error classification |
 | `src/lib/types.ts` | Types for the data contract |
 | `src/lib/render.ts` | Stretch (linear/sqrt/asinh, shared across epochs), difference images, offscreen canvases |
 | `src/lib/coords.ts` | Parses decimal degrees or sexagesimal input |

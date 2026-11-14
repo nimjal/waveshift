@@ -1,7 +1,9 @@
 // Every network call the app makes lives in this module:
 //   - curated targets: static JSON under <base>/data/
-//   - custom coordinates: the backend API, GET {VITE_API_URL}/target?ra=&dec=
+//   - custom coordinates: the backend API, GET {VITE_API_URL}/target?ra=&dec= (plan)
+//     then POST {VITE_API_URL}/target/refine until done (see lib/live.ts)
 
+import { type LivePlan, looksLikePlan, looksLikeRefine, type RefineResponse } from './live'
 import type { TargetData, TargetIndexEntry } from './types'
 
 // ---------------------------------------------------------------------------
@@ -31,6 +33,7 @@ export type ApiErrorKind =
   | 'upstream' // the API reached the archive but it failed (502 with detail)
   | 'server' // any other non-OK response
   | 'bad-response' // response was not the expected JSON
+  | 'plan-changed' // 409 from refine: the archive changed, restart from GET /target
   | 'aborted' // user cancelled
 
 export class ApiError extends Error {
@@ -169,23 +172,14 @@ function extractDetail(body: unknown): string | undefined {
   return undefined
 }
 
-/**
- * Build (or fetch the cached build of) a sky patch at arbitrary coordinates.
- * The request can take several minutes; there's deliberately no client timeout.
- * Pass an AbortSignal to cancel. The server keeps going and caches the result, so
- * asking again later may be instant.
- */
-export async function fetchCustomTarget(ra: number, dec: number, signal?: AbortSignal): Promise<TargetData> {
+/** Shared fetch + error mapping for the live API. Resolves the parsed JSON body. */
+async function apiJson(path: string, init: RequestInit, signal?: AbortSignal): Promise<{ body: unknown; status: number }> {
   if (!API_URL) {
     throw new ApiError('not-configured', 'This site was built without a backend API, so custom coordinates are unavailable.')
   }
-  const invalid = validateCoords(ra, dec)
-  if (invalid) throw new ApiError('invalid-input', invalid)
-
-  const url = `${API_URL}/target?ra=${encodeURIComponent(ra)}&dec=${encodeURIComponent(dec)}`
   let res: Response
   try {
-    res = await fetch(url, { signal, headers: { Accept: 'application/json' } })
+    res = await fetch(`${API_URL}${path}`, { ...init, signal, headers: { Accept: 'application/json', ...init.headers } })
   } catch (e) {
     if (signal?.aborted) throw new ApiError('aborted', 'Request cancelled.')
     throw new ApiError('network', `Couldn't reach the API at ${API_URL}.`, { detail: e instanceof Error ? e.message : undefined })
@@ -204,6 +198,9 @@ export async function fetchCustomTarget(ra: number, dec: number, signal?: AbortS
     if (res.status === 422) {
       throw new ApiError('invalid-input', 'The API rejected those coordinates.', { status: res.status, detail })
     }
+    if (res.status === 409) {
+      throw new ApiError('plan-changed', 'The archive changed since this patch was planned.', { status: res.status, detail })
+    }
     if (res.status === 502 && detail) {
       throw new ApiError('upstream', 'The SPHEREx archive request failed.', { status: res.status, detail })
     }
@@ -212,9 +209,39 @@ export async function fetchCustomTarget(ra: number, dec: number, signal?: AbortS
     }
     throw new ApiError('server', `The API returned an error (HTTP ${res.status}).`, { status: res.status, detail })
   }
+  return { body, status: res.status }
+}
 
-  if (!looksLikeTargetData(body)) {
-    throw new ApiError('bad-response', 'The API returned data in an unexpected format.', { status: res.status })
+/**
+ * GET /target: the refinement plan for a position (epochs + ordered exposures, no
+ * pixels). One archive query, a few seconds; repeated positions are cached server-side.
+ */
+export async function fetchLivePlan(ra: number, dec: number, signal?: AbortSignal): Promise<LivePlan> {
+  const invalid = validateCoords(ra, dec)
+  if (invalid) throw new ApiError('invalid-input', invalid)
+  const { body, status } = await apiJson(
+    `/target?ra=${encodeURIComponent(ra)}&dec=${encodeURIComponent(dec)}`,
+    { method: 'GET' },
+    signal,
+  )
+  if (!looksLikePlan(body)) {
+    throw new ApiError('bad-response', 'The API returned data in an unexpected format.', { status })
+  }
+  return body
+}
+
+/** POST /target/refine: the next batch for every epoch. Takes up to ~15 s. */
+export async function refineLive(
+  req: { ra: number; dec: number; cursor: string; batch_per_epoch: number },
+  signal?: AbortSignal,
+): Promise<RefineResponse> {
+  const { body, status } = await apiJson(
+    '/target/refine',
+    { method: 'POST', body: JSON.stringify(req), headers: { 'Content-Type': 'application/json' } },
+    signal,
+  )
+  if (!looksLikeRefine(body)) {
+    throw new ApiError('bad-response', 'The API returned data in an unexpected format.', { status })
   }
   return body
 }

@@ -8,17 +8,30 @@ import { Label } from '@/components/ui/label'
 import { API_URL, type ApiError, checkApiHealth, validateCoords } from '@/lib/api'
 import { parseDec, parseRa } from '@/lib/coords'
 
+export interface LiveProgress {
+  /** exposures per epoch so far (equal for every epoch) */
+  depth: number
+  /** exposures per epoch when fully refined */
+  total: number
+  /** per-epoch skipped-exposure summaries, e.g. "B: 2 skipped (all masked ×2)" */
+  failed: string[]
+}
+
 export type CustomRequest =
   | { status: 'idle' }
-  | { status: 'loading'; ra: number; dec: number; startedAt: number }
+  | { status: 'planning'; ra: number; dec: number; startedAt: number }
+  | { status: 'refining'; ra: number; dec: number; startedAt: number; progress: LiveProgress; retrying?: string }
+  | { status: 'stopped'; ra: number; dec: number; progress: LiveProgress; error?: ApiError }
   | { status: 'error'; ra: number; dec: number; error: ApiError }
-  | { status: 'done'; ra: number; dec: number }
+  | { status: 'done'; ra: number; dec: number; progress: LiveProgress }
 
 interface Props {
   request: CustomRequest
   initialRa?: string
   initialDec?: string
   onSubmit: (ra: number, dec: number) => void
+  /** continue a stopped refinement from its cursor */
+  onResume: (ra: number, dec: number) => void
   onCancel: () => void
   onShowCurated: () => void
 }
@@ -42,13 +55,6 @@ function fmtElapsed(s: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-/** Honest stage hints: the API doesn't stream progress, so these are typical timings. */
-function stageHint(s: number): string {
-  if (s < 10) return 'Asking the IRSA archive which SPHEREx images cover this spot…'
-  if (s < 60) return 'Downloading image cutouts. This is the slow part…'
-  if (s < 180) return 'Still downloading and aligning cutouts. A few minutes is normal for a new position.'
-  return 'Taking longer than usual. The archive may be busy. You can keep waiting or cancel and try a curated target.'
-}
 
 function errorCopy(err: ApiError): { title: string; body: string } {
   switch (err.kind) {
@@ -67,7 +73,12 @@ function errorCopy(err: ApiError): { title: string; body: string } {
     case 'timeout':
       return {
         title: 'The server took too long to answer',
-        body: 'Building a new sky patch can outlast the gateway timeout. The server may still be working and caching the result, so trying the same coordinates again later can be instant.',
+        body: 'The archive may be busy. Whatever was already fetched is kept; try again or resume in a minute.',
+      }
+    case 'plan-changed':
+      return {
+        title: 'The archive changed while refining',
+        body: 'New SPHEREx data arrived for this position. Fetch the patch again to start from the new image list.',
       }
     case 'upstream':
       return {
@@ -78,14 +89,11 @@ function errorCopy(err: ApiError): { title: string; body: string } {
     case 'server':
       return { title: 'Something went wrong on the server', body: err.message }
     case 'aborted':
-      return {
-        title: 'Request cancelled',
-        body: 'The server may finish the build anyway and cache it, so trying again later may be quick.',
-      }
+      return { title: 'Request cancelled', body: 'Nothing was fetched yet. Fetch the patch again whenever you like.' }
   }
 }
 
-export function CustomPanel({ request, initialRa = '', initialDec = '', onSubmit, onCancel, onShowCurated }: Props) {
+export function CustomPanel({ request, initialRa = '', initialDec = '', onSubmit, onResume, onCancel, onShowCurated }: Props) {
   const [raText, setRaText] = useState(initialRa)
   const [decText, setDecText] = useState(initialDec)
   const [formError, setFormError] = useState<string | null>(null)
@@ -100,7 +108,7 @@ export function CustomPanel({ request, initialRa = '', initialDec = '', onSubmit
     return () => ctrl.abort()
   }, [])
 
-  const loading = request.status === 'loading'
+  const loading = request.status === 'planning' || request.status === 'refining'
   const elapsed = useElapsed(loading ? request.startedAt : null)
 
   const submit = (e: React.FormEvent) => {
@@ -140,9 +148,9 @@ export function CustomPanel({ request, initialRa = '', initialDec = '', onSubmit
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-muted-foreground">
-        Enter any sky position. The server pulls SPHEREx images from the archive and stacks them by epoch. A new position
-        can take <strong className="text-foreground">a few minutes</strong>; positions already requested come back
-        instantly.
+        Enter any sky position. The server pulls SPHEREx images from the archive a few at a time and stacks them by
+        epoch: the <strong className="text-foreground">first frames appear within seconds</strong> and sharpen as more
+        exposures arrive. Long-wavelength detectors (D6, D5) come first, where cold objects are brightest.
       </p>
 
       <form onSubmit={submit} className="flex flex-col gap-3" noValidate>
@@ -200,7 +208,7 @@ export function CustomPanel({ request, initialRa = '', initialDec = '', onSubmit
             default action would submit the form and immediately restart the request. */}
         {loading ? (
           <Button key="cancel" type="button" variant="outline" onClick={onCancel}>
-            Cancel
+            {request.status === 'refining' ? 'Stop refining' : 'Cancel'}
           </Button>
         ) : (
           <Button key="submit" type="submit">
@@ -228,16 +236,67 @@ export function CustomPanel({ request, initialRa = '', initialDec = '', onSubmit
           <div className="flex items-center justify-between gap-2 text-sm">
             <span className="flex items-center gap-2 font-medium">
               <Loader2 className="size-4 animate-spin" />
-              Building RA {request.ra.toFixed(4)}, Dec {request.dec >= 0 ? '+' : ''}
+              {request.status === 'planning' ? 'Planning' : 'Refining'} RA {request.ra.toFixed(4)}, Dec{' '}
+              {request.dec >= 0 ? '+' : ''}
               {request.dec.toFixed(4)}
             </span>
             <span className="font-mono tabular-nums">{fmtElapsed(elapsed)}</span>
           </div>
-          <div className="relative h-1.5 overflow-hidden rounded-full bg-muted">
-            <div className="absolute inset-y-0 w-1/3 animate-[indeterminate_1.6s_ease-in-out_infinite] rounded-full bg-primary" />
-          </div>
-          <p className="text-xs text-muted-foreground">{stageHint(elapsed)}</p>
+          {request.status === 'planning' ? (
+            <>
+              <div className="relative h-1.5 overflow-hidden rounded-full bg-muted">
+                <div className="absolute inset-y-0 w-1/3 animate-[indeterminate_1.6s_ease-in-out_infinite] rounded-full bg-primary" />
+              </div>
+              <p className="text-xs text-muted-foreground">Asking the IRSA archive which SPHEREx images cover this spot…</p>
+            </>
+          ) : (
+            <>
+              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-primary transition-[width]"
+                  style={{
+                    width: `${request.progress.total ? (100 * request.progress.depth) / request.progress.total : 0}%`,
+                  }}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                refining ·{' '}
+                <span className="font-mono tabular-nums">
+                  {request.progress.depth}/{request.progress.total}
+                </span>{' '}
+                exposures per epoch
+                {request.progress.depth === 0 && ' · fetching the first frames'}
+              </p>
+              {request.retrying && <p className="text-xs text-amber-600 dark:text-amber-400">{request.retrying}</p>}
+            </>
+          )}
         </div>
+      )}
+
+      {request.status === 'stopped' && (
+        <Alert variant={request.error ? 'destructive' : 'default'}>
+          <AlertTriangle />
+          <AlertTitle>
+            {request.error ? errorCopy(request.error).title : 'Refinement stopped'} at {request.progress.depth}/
+            {request.progress.total} exposures per epoch
+          </AlertTitle>
+          <AlertDescription className="flex flex-col gap-2">
+            <p>
+              {request.error
+                ? 'What was fetched so far is still shown. Resume to keep sharpening it.'
+                : 'The frames so far stay on screen. Resume continues where it left off.'}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => onResume(request.ra, request.dec)}>
+                Resume
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {request.status === 'done' && request.progress.failed.length > 0 && (
+        <p className="text-xs text-muted-foreground">Skipped exposures: {request.progress.failed.join('; ')}.</p>
       )}
 
       {request.status === 'error' && (

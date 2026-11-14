@@ -9,11 +9,12 @@ objects that move or change brightness, like nearby stars and brown dwarfs, stan
 ## What it does
 
 - **Curated targets** are built ahead of time into static JSON (`web/public/data/`) and load instantly.
-- **Any other position** is built on demand by the API, which fetches SPHEREx cutouts from IRSA,
-  aligns them and stacks them per epoch. A new position can take a few minutes. Live requests use
-  at most 4 images per epoch and detector (`[live] max_per_group`; `full=true` uses all of them),
-  while curated builds use every image. Results are cached in `data/cache/live/`, so asking for the
-  same position again is instant.
+- **Any other position** is refined progressively by the API: `GET /target` returns the plan
+  (epochs + ordered exposures, a few seconds), then the page calls `POST /target/refine` repeatedly
+  (≤ 15 s each) and re-renders after every call. First frames show within ~10 s; every epoch is
+  always at the same depth. Pixels are read with HTTP range requests straight from the IRSA files.
+  The server is stateless (the client carries a cursor); plans and finished frames are cached
+  under the cache dir as a speed-up. See `docs/schema.md` → "Live API".
 - The player blinks between epochs on a 25 × 25 px grid (6.15″/px, north up, east left). For each
   detector, one brightness stretch is shared by all epochs, so the blink shows real changes rather
   than rescaling. Views:
@@ -60,7 +61,7 @@ Positions and proper motions are in `config/targets.toml`.
                            │              │
             just build     │              │   just api  (FastAPI, :7860)
             (cli.py)       ▼              ▼   GET /target?ra=&dec=   (api.py)
-     web/public/data/*.json             same JSON shape, cached in data/cache/live/
+     web/public/data/*.json             + POST /target/refine (progressive)
                            │              │
                            └──────┬───────┘
                                   ▼
@@ -87,11 +88,11 @@ Then use one terminal for each command, run from the repo root:
 
 ```sh
 just build   # optional: rebuild curated targets into web/public/data (already committed)
-just api     # FastAPI backend on http://localhost:7860 (/health, /target?ra=&dec=)
+just api     # FastAPI backend on http://localhost:7860 (/health, GET /target?ra=&dec=, POST /target/refine)
 just web     # Vite dev server, http://localhost:5173 by default
 ```
 
-- `just build` queries IRSA and downloads cutouts into `data/cache/`. To build a subset, run
+- `just build` queries IRSA and downloads cutouts into `py/data/cache/` (git-ignored). To build a subset, run
   `cd py && uv run python -m planetx.cli build barnard r-dra`.
 - `just lint` runs oxlint on the frontend.
 
@@ -136,21 +137,19 @@ France. This is an independent project and is not endorsed by NASA.
 | export | 2 | row flip, NaN → null, writer rejects NaN, failed write leaves the old file intact |
 | pipeline | 5 | output shape, star lands on `predicted_px`, per-group cap, detector filter, no-images case |
 | cli | 2 | writes and merges the index; one failing target doesn't stop the rest |
-| api | 4 | build + cache, input validation, upstream failure → 502, CORS |
+| api | 8 | /health without config, refine plan (slot order, equal per-detector depth, cache), refine deltas + reason codes, stall → progress guarantee, 422/409 errors, input validation, upstream failure → 502, CORS incl. POST preflight |
 | live | 3 | real IRSA query and cutout for WISE 0855, live SIMBAD lookup |
 | live-e2e | 1 | full `build_target` for WISE 0855, plus a saved epoch plot |
 
-The first 59 checks run offline against synthetic FITS files and a mocked IRSA. The last 4 need
+All but the last 4 checks run offline against synthetic FITS files and a mocked IRSA. The last 4 need
 network access; set `RUN_LIVE = False` to skip them. To run it, use the `py/.venv` kernel
 (`ipykernel` is in the `dev` group) and choose Restart & Run All. Results are written to
-`notebooks/test_output/` (`report.md`, `results.json`, `wise0855_epochs.png`). The recorded run
-(2026-11-14) passed 63 of 63.
+`notebooks/test_output/` (`report.md`, `results.json`, `wise0855_epochs.png`; git-ignored). Last
+offline run (2026-11-14): 67 of 67 passed.
 
 ## Not yet done
 
-- Gaia support (`py/src/planetx/gaia.py` contains only a TODO).
 - Proper-motion lookup for custom coordinates (the reticle marks the field centre).
-- Progress reporting for live requests (the API returns only when the build is finished).
 - Frontend tests.
 - Demo and video URLs above are placeholders.
 

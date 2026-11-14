@@ -6,6 +6,7 @@ data/cache/*
 .venv/
 __pycache__/
 .ipynb_checkpoints/
+notebooks/test_output/
 node_modules/
 web/dist/
 .env

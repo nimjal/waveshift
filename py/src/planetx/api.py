@@ -1,19 +1,21 @@
 from __future__ import annotations
 
-import json
 import logging
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
-from . import config, targets
-from .export import write_json
-from .pipeline import build_target     # tests swap api.build_target
+from . import config, live
 
 log = logging.getLogger(__name__)
 
 app = FastAPI(title="Planet X API")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"])
+# POST /target/refine sends JSON, so browsers preflight it: allow POST + Content-Type.
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"], allow_headers=["*"])
+
+REFINE_BUDGET_S = 15.0
+REFINE_WORKERS = 6
 
 
 @app.get("/health")
@@ -24,33 +26,41 @@ def health() -> dict:
 
 @app.get("/target")
 def target(ra: float = Query(..., ge=0, lt=360),
-           dec: float = Query(..., ge=-90, le=90),
-           full: bool = Query(False, description="all images instead of a capped sample")) -> dict:
-    """Plain `def` (not async): FastAPI runs it in a thread pool, so slow IRSA calls
-    don't block other requests.
-    - cache file: config.cache_dir()/'live'/f'live_{ra:.4f}_{dec:+.4f}_{"full"|"cap"}.json'
-      -> if it exists, return its contents (no rebuild)
-    - else build_target(targets.adhoc(ra, dec), sources, config.cache_dir(),
-      max_per_group=None if full else sources['live']['max_per_group'])
-      (call it as the module-level name `build_target` so tests can swap it)
-    - upstream exception -> HTTPException(502); write the cache; return the dict."""
+           dec: float = Query(..., ge=-90, le=90)) -> dict:
+    """The refinement plan for a position: grid, epochs, the ordered exposure list per
+    epoch and the starting cursor. One SIA query, no pixels (a few seconds).
+    Pixels come from POST /target/refine. See docs/schema.md."""
 
     sources = config.load_sources()
-    key = f"live_{ra:.4f}_{dec:+.4f}_{'full' if full else 'cap'}.json"
-    cache = config.cache_dir()
-    cached = cache / "live" / key
-
-    if cached.exists():
-        return json.loads(cached.read_text())
-    cap = None if full else int(sources.get("live", {}).get("max_per_group", 4))
-
     try:
-        data = build_target(targets.adhoc(ra, dec), sources, cache, max_per_group=cap)
+        plan = live.get_plan(ra, dec, sources)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"upstream failure: {type(e).__name__}: {e}") from e
+    return live.plan_response(plan, sources)
 
+
+class RefineRequest(BaseModel):
+    ra: float = Field(..., ge=0, lt=360)
+    dec: float = Field(..., ge=-90, le=90)
+    cursor: str = Field(..., max_length=64)
+    batch_per_epoch: int = Field(2, ge=1, le=12)
+
+
+@app.post("/target/refine")
+def refine(req: RefineRequest) -> dict:
+    """Fetch the next `batch_per_epoch` exposures of EVERY epoch (round-robin, whole
+    rounds only, so epochs stay equally deep) for at most ~15 s. Stateless: returns
+    per-call sum / valid-count deltas and the next cursor. Plain `def`: runs in the
+    thread pool, so slow archive calls don't block other requests."""
+
+    sources = config.load_sources()
     try:
-        write_json(cached, data)
-    except OSError as e:
-        log.warning("could not write live cache %s: %s", cached, e)
-    return data
+        return live.refine(req.ra, req.dec, req.cursor, req.batch_per_epoch, sources,
+                           budget_s=REFINE_BUDGET_S, workers=REFINE_WORKERS)
+    except live.BadCursor as e:
+        raise HTTPException(422, str(e)) from e
+    except live.PlanMismatch as e:
+        raise HTTPException(409, f"plan changed, restart from GET /target: {e}") from e
+    except Exception as e:  # noqa: BLE001
+        log.exception("refine failed")
+        raise HTTPException(502, f"upstream failure: {type(e).__name__}: {e}") from e

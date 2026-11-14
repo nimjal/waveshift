@@ -1,7 +1,9 @@
 """Which SPHEREx images cover a position, grouped into epochs."""
 from __future__ import annotations
 
+import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 
 import astropy.units as u
 import numpy as np
@@ -11,7 +13,8 @@ from astropy.time import Time
 
 # Columns kept from the SIA result (everything else is dropped).
 KEEP = ["obs_id", "access_url", "energy_bandpassname", "t_min", "t_max",
-        "em_min", "em_max", "s_pixel_scale", "dataproduct_subtype", "obs_collection"]
+        "em_min", "em_max", "s_pixel_scale", "dataproduct_subtype", "obs_collection",
+        "s_ra", "s_dec"]  # image centre: used to rank exposures by coverage
 STR_COLS = {"obs_id", "access_url", "energy_bandpassname", "dataproduct_subtype", "obs_collection"}
 
 
@@ -53,13 +56,21 @@ def find_images(coord: SkyCoord, collections: list[str],
     Returns empty() if nothing anywhere."""
     from astroquery.ipac.irsa import Irsa
 
-    parts = []
-    for coll in collections:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            t = Irsa.query_sia(pos=(coord, radius), collection=coll)
-        if t is not None and len(t):
-            parts.append(_clean(Table(t)))
+    def one(coll: str):
+        for attempt in range(2):  # IRSA occasionally drops a connection; retry once
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    return Irsa.query_sia(pos=(coord, radius), collection=coll)
+            except Exception:  # noqa: BLE001
+                if attempt:
+                    raise
+                time.sleep(1.0)
+
+    # collections in parallel: the slowest one sets the latency, not the sum
+    with ThreadPoolExecutor(max_workers=max(1, len(collections))) as ex:
+        results = list(ex.map(one, collections))
+    parts = [_clean(Table(t)) for t in results if t is not None and len(t)]
     if not parts:
         return empty()
     t = vstack(parts) if len(parts) > 1 else parts[0]
