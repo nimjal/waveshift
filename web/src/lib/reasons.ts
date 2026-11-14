@@ -269,7 +269,9 @@ export function swatchBackground(style: ReasonStyle): string {
 export class ReasonAcc {
   readonly codes: Uint8Array
   readonly names = new Map<number, string>()
-  constructor(readonly n: number) {
+  readonly n: number
+  constructor(n: number) {
+    this.n = n
     this.codes = new Uint8Array(n * n)
   }
 
