@@ -1,5 +1,5 @@
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, Crosshair, Pause, Play } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Crosshair, Download, LineChart, Loader2, Pause, Play } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -20,6 +20,7 @@ import {
   type Stretch,
   type ViewMode,
 } from '@/lib/render'
+import { LightCurvePanel } from '@/components/LightCurvePanel'
 import { SpectrumPanel } from '@/components/SpectrumPanel'
 import type { Pick } from '@/lib/spectrum'
 import type { Frame, SpectrumData, TargetData } from '@/lib/types'
@@ -47,7 +48,7 @@ function formatValue(v: number): string {
 const rgb = (c: readonly number[]) => `rgb(${c.join(',')})`
 
 /** Diagonal hatch over saturated (code 1) cells, drawn at display scale. */
-function drawSaturatedHatch(ctx: CanvasRenderingContext2D, frame: Frame | undefined, size: number) {
+function drawSaturatedHatch(ctx: CanvasRenderingContext2D, frame: Frame | undefined, size: number, cell = CELL) {
   if (!frame?.reasons) return
   ctx.save()
   ctx.beginPath()
@@ -55,7 +56,7 @@ function drawSaturatedHatch(ctx: CanvasRenderingContext2D, frame: Frame | undefi
   for (let r = 0; r < size; r++)
     for (let c = 0; c < size; c++)
       if (reasonAt(frame, r, c) === 1) {
-        ctx.rect(c * CELL, r * CELL, CELL, CELL)
+        ctx.rect(c * cell, r * cell, cell, cell)
         any = true
       }
   if (any) {
@@ -63,7 +64,7 @@ function drawSaturatedHatch(ctx: CanvasRenderingContext2D, frame: Frame | undefi
     ctx.strokeStyle = SATURATED_HATCH
     ctx.lineWidth = 1.5
     ctx.beginPath()
-    const full = size * CELL
+    const full = size * cell
     for (let d = -full; d < full; d += 6) {
       ctx.moveTo(d, full)
       ctx.lineTo(d + full, 0)
@@ -78,13 +79,14 @@ function drawOverlay(
   data: TargetData,
   epochIdx: number,
   showMarker: boolean,
+  cell = CELL,
 ) {
   const size = data.grid.size_px
-  const full = size * CELL
+  const full = size * cell
 
   if (showMarker) {
     // faint track through every epoch's predicted position
-    const pts = data.epochs.map((e) => [(e.predicted_px.x + 0.5) * CELL, (e.predicted_px.y + 0.5) * CELL] as const)
+    const pts = data.epochs.map((e) => [(e.predicted_px.x + 0.5) * cell, (e.predicted_px.y + 0.5) * cell] as const)
     if (pts.length > 1) {
       ctx.strokeStyle = TRACK_COLOR
       ctx.lineWidth = 1.5
@@ -102,8 +104,8 @@ function drawOverlay(
     }
     // reticle with a gap, so it frames the object instead of covering it
     const [x, y] = pts[epochIdx]
-    const gap = CELL * 1.4
-    const len = CELL * 1.1
+    const gap = cell * 1.4
+    const len = cell * 1.1
     ctx.strokeStyle = MARKER_COLOR
     ctx.lineWidth = 2
     ctx.beginPath()
@@ -120,7 +122,7 @@ function drawOverlay(
 
   // scale bar (bottom left): 30 arcsec
   const arcsec = 30
-  const barPx = (arcsec / data.grid.pixel_scale_arcsec) * CELL
+  const barPx = (arcsec / data.grid.pixel_scale_arcsec) * cell
   const bx = 14
   const by = full - 16
   ctx.fillStyle = 'rgba(0,0,0,0.55)'
@@ -176,6 +178,78 @@ interface Props {
   /** per-exposure samples for the click-to-spectrum panel: already in memory (live) or
    * fetched on the first click (curated sidecar file) */
   spectrum?: { live: SpectrumData } | { load: () => Promise<SpectrumData | null> }
+  /** ?embed=1: only the player (canvas, epochs, blink/difference) */
+  embed?: boolean
+}
+
+/** GIF export: sky pixel -> 14 px, so a 25 px grid is a 350 px square (small file, still legible). */
+const GIF_CELL = 14
+
+/** Draw every epoch offscreen at GIF_CELL and encode a looping GIF (encoder lazy-loaded). */
+async function exportGif(
+  data: TargetData,
+  canvases: (HTMLCanvasElement | null)[],
+  frameKey: string,
+  mode: ViewMode,
+  stretch: Stretch,
+  showMarker: boolean,
+  fps: number,
+) {
+  const { encodeGif } = await import('@/lib/gif')
+  const size = data.grid.size_px
+  const full = size * GIF_CELL
+  const cv = document.createElement('canvas')
+  cv.width = full
+  cv.height = full
+  const ctx = cv.getContext('2d', { willReadFrequently: true })!
+  ctx.imageSmoothingEnabled = false
+  const frames: ImageData[] = []
+  data.epochs.forEach((e, i) => {
+    ctx.fillStyle = '#000'
+    ctx.fillRect(0, 0, full, full)
+    const src = canvases[i]
+    if (src) {
+      ctx.drawImage(src, 0, 0, full, full)
+      drawSaturatedHatch(ctx, e.frames[frameKey], size, GIF_CELL)
+    } else {
+      ctx.fillStyle = rgb(NO_DATA_RGB)
+      ctx.fillRect(0, 0, full, full)
+      ctx.fillStyle = '#fff'
+      ctx.font = '13px ui-sans-serif, system-ui, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillText(`No ${frameKey} data in this epoch`, full / 2, full / 2)
+    }
+    drawOverlay(ctx, data, i, showMarker, GIF_CELL)
+    // burned-in labels: epoch (top left, like the player) and what is shown (bottom right)
+    ctx.font = 'bold 13px ui-monospace, monospace'
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'top'
+    const label = `${e.id} · ${e.label}`
+    ctx.fillStyle = 'rgba(0,0,0,0.65)'
+    ctx.fillRect(6, 6, ctx.measureText(label).width + 12, 22)
+    ctx.fillStyle = '#fff'
+    ctx.fillText(label, 12, 10)
+    ctx.font = '11px ui-sans-serif, system-ui, sans-serif'
+    ctx.textAlign = 'right'
+    ctx.textBaseline = 'bottom'
+    const what = `${data.target.name} · ${frameKey} · ${mode === 'diff' ? 'difference' : 'blink'} · ${stretch}`
+    ctx.fillStyle = 'rgba(0,0,0,0.65)'
+    const tw = ctx.measureText(what).width
+    ctx.fillRect(full - tw - 14, full - 22, tw + 8, 18)
+    ctx.fillStyle = '#fff'
+    ctx.fillText(what, full - 10, full - 7)
+    ctx.textBaseline = 'alphabetic'
+    frames.push(ctx.getImageData(0, 0, full, full))
+  })
+  const blob = encodeGif(frames, 1000 / fps)
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `waveshift-${data.target.id}-${frameKey}-${mode}.gif`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  window.setTimeout(() => URL.revokeObjectURL(a.href), 10000)
+  return blob.size
 }
 
 /** Outline the picked pixel (or, when following the target, its position this epoch). */
@@ -193,7 +267,8 @@ function drawPick(ctx: CanvasRenderingContext2D, data: TargetData, epochIdx: num
   ctx.restore()
 }
 
-export function BlinkPlayer({ data, display, onDisplayChange, spectrum }: Props) {
+export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrumProp, embed = false }: Props) {
+  const spectrum = embed ? undefined : spectrumProp
   const frameKeys = useMemo(() => availableFrameKeys(data), [data])
   const nEpochs = data.epochs.length
 
@@ -203,6 +278,10 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum }: Props)
   const [showMarker, setShowMarker] = useState(true)
   const [pick, setPick] = useState<Pick | null>(null)
   const [loaded, setLoaded] = useState<SpectrumData | null | 'loading' | 'error'>(null)
+  // light curve: open by default for variable stars, on request for anything else
+  const [showLc, setShowLc] = useState(() => !embed && /variable/i.test(data.target.kind))
+  const [gif, setGif] = useState<'idle' | 'working' | 'error' | number>('idle')
+  const onGif = () => setGif('working')
   const spectrumData = spectrum && 'live' in spectrum ? spectrum.live : loaded
 
   // A requested detector this target doesn't have (yet: live views fetch D6/D5 first) is
@@ -217,6 +296,19 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum }: Props)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   const rendered = useMemo(() => renderFrames(data, frameKey, mode, stretch), [data, frameKey, mode, stretch])
+
+  // GIF export runs in an effect (not the click handler) so the memoised frames stay memoised
+  useEffect(() => {
+    if (gif !== 'working') return
+    let cancelled = false
+    exportGif(data, rendered.canvases, frameKey, mode, stretch, showMarker, fps).then(
+      (bytes) => !cancelled && setGif(bytes),
+      () => !cancelled && setGif('error'),
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [gif, data, rendered, frameKey, mode, stretch, showMarker, fps])
 
   // advance frames while playing
   useEffect(() => {
@@ -315,7 +407,7 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum }: Props)
     const fy = ((e.clientY - box.top) / box.height) * n - 0.5
     const c = Math.round(fx)
     const r = Math.round(fy)
-    if (r < 0 || c < 0 || r >= n || c >= n) return
+    if (!spectrum || r < 0 || c < 0 || r >= n || c >= n) return
     const p = data.epochs[epochIdx].predicted_px
     const moves = data.target.pmra !== 0 || data.target.pmdec !== 0
     const follow = moves && Math.hypot(fx - p.x, fy - p.y) <= 1.5
@@ -403,11 +495,31 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum }: Props)
             <ChevronRight />
           </Button>
         </div>
-        {spectrum && !pick && (
-          <p className="mt-2 text-xs text-muted-foreground">
-            Click the target or any pixel to plot its spectrum from the exposures in this view.
-          </p>
-        )}
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+          {spectrum && !pick && (
+            <p className="text-xs text-muted-foreground">
+              Click the target or any pixel to plot its spectrum from the exposures in this view.
+            </p>
+          )}
+          {!embed && (
+            <div className="ml-auto flex flex-wrap items-center gap-1.5">
+              {gif === 'error' && <span className="text-xs text-destructive">GIF export failed</span>}
+              {typeof gif === 'number' && (
+                <span className="text-xs text-muted-foreground">GIF saved ({Math.round(gif / 1024)} KB)</span>
+              )}
+              {nEpochs > 1 && (
+                <Button size="xs" variant="outline" onClick={onGif} disabled={gif === 'working'}>
+                  {gif === 'working' ? <Loader2 className="animate-spin" /> : <Download />} Download GIF
+                </Button>
+              )}
+              {!showLc && nEpochs > 1 && (
+                <Button size="xs" variant="outline" onClick={() => setShowLc(true)}>
+                  <LineChart /> Light curve
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
         {nEpochs < 2 && (
           <p className="mt-2 text-sm text-muted-foreground">
             Only one epoch has data here, so there's nothing to blink against yet.
@@ -419,151 +531,182 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum }: Props)
         <SpectrumPanel data={data} spectrum={spectrumData} pick={pick} onClose={() => setPick(null)} />
       )}
 
+      {showLc && !embed && nEpochs > 1 && (
+        <LightCurvePanel
+          data={data}
+          detector={frameKey}
+          onPickDetector={setFrameKey}
+          onClose={() => setShowLc(false)}
+        />
+      )}
+
+      {embed && (
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          value={mode}
+          onValueChange={(v) => v && setMode(v as ViewMode)}
+          className="w-full"
+          aria-label="View"
+        >
+          <ToggleGroupItem value="blink" className="flex-1">
+            Blink
+          </ToggleGroupItem>
+          <ToggleGroupItem value="diff" className="flex-1">
+            Difference
+          </ToggleGroupItem>
+        </ToggleGroup>
+      )}
+
       {/* controls */}
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="detector">Detector / wavelength</Label>
-          <Select value={frameKey} onValueChange={setFrameKey}>
-            <SelectTrigger id="detector" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {frameKeys.map((k) => (
-                <SelectItem key={k} value={k}>
-                  {detectorLabel(k, data)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {detMissing && frameKeys.length > 0 && (
-            <p className="text-xs text-muted-foreground">
-              {display.det} has no data here{data.target.kind === 'custom' ? ' yet' : ''}; showing {frameKey}.
-            </p>
+      {!embed && (
+        <>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="detector">Detector / wavelength</Label>
+            <Select value={frameKey} onValueChange={setFrameKey}>
+              <SelectTrigger id="detector" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {frameKeys.map((k) => (
+                  <SelectItem key={k} value={k}>
+                    {detectorLabel(k, data)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {detMissing && frameKeys.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {display.det} has no data here{data.target.kind === 'custom' ? ' yet' : ''}; showing {frameKey}.
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label>View</Label>
+            <ToggleGroup
+              type="single"
+              variant="outline"
+              value={mode}
+              onValueChange={(v) => v && setMode(v as ViewMode)}
+              className="w-full"
+            >
+              <ToggleGroupItem value="blink" className="flex-1">
+                Blink
+              </ToggleGroupItem>
+              <ToggleGroupItem value="diff" className="flex-1">
+                Difference
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label>Stretch</Label>
+            <ToggleGroup
+              type="single"
+              variant="outline"
+              value={stretch}
+              onValueChange={(v) => v && setStretch(v as Stretch)}
+              className="w-full"
+            >
+              <ToggleGroupItem value="linear" className="flex-1">
+                Linear
+              </ToggleGroupItem>
+              <ToggleGroupItem value="sqrt" className="flex-1">
+                Sqrt
+              </ToggleGroupItem>
+              <ToggleGroupItem value="asinh" className="flex-1">
+                Asinh
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="speed">Blink speed · {fps.toFixed(1)} frames/s</Label>
+            <Slider
+              id="speed"
+              min={0.5}
+              max={6}
+              step={0.5}
+              value={[fps]}
+              onValueChange={([v]) => setFps(v)}
+              disabled={nEpochs < 2}
+              className="py-2"
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+          <label className="flex cursor-pointer items-center gap-2">
+            <Switch checked={showMarker} onCheckedChange={setShowMarker} />
+            <Crosshair className="size-4" style={{ color: MARKER_COLOR }} />
+            Predicted position
+          </label>
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <span className="inline-block size-3 rounded-sm border border-border" style={{ background: rgb(NO_DATA_RGB) }} />
+            No data
+          </span>
+          {present.has(1) && (
+            <span className="flex items-center gap-2 text-muted-foreground">
+              <span
+                className="inline-block size-3 rounded-sm border border-border"
+                style={{
+                  background: `repeating-linear-gradient(-45deg, ${SATURATED_HATCH} 0 1.5px, ${rgb(SATURATED_RGB)} 1.5px 4px)`,
+                }}
+              />
+              Saturated
+            </span>
+          )}
+          {present.has(2) && (
+            <span className="flex items-center gap-2 text-muted-foreground">
+              <span className="inline-block size-3 rounded-sm border border-border" style={{ background: rgb(FLAGGED_RGB) }} />
+              Flagged{frame?.flags ? ` (${Object.keys(frame.flags).join(', ')})` : ''}
+            </span>
+          )}
+          {mode === 'diff' && (
+            <span className="flex items-center gap-2 text-muted-foreground">
+              <span className="inline-block h-3 w-16 rounded-sm bg-gradient-to-r from-[rgb(60,150,255)] via-black to-[rgb(255,190,60)]" />
+              fainter · brighter than the median
+            </span>
           )}
         </div>
 
-        <div className="flex flex-col gap-2">
-          <Label>View</Label>
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            value={mode}
-            onValueChange={(v) => v && setMode(v as ViewMode)}
-            className="w-full"
-          >
-            <ToggleGroupItem value="blink" className="flex-1">
-              Blink
-            </ToggleGroupItem>
-            <ToggleGroupItem value="diff" className="flex-1">
-              Difference
-            </ToggleGroupItem>
-          </ToggleGroup>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <Label>Stretch</Label>
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            value={stretch}
-            onValueChange={(v) => v && setStretch(v as Stretch)}
-            className="w-full"
-          >
-            <ToggleGroupItem value="linear" className="flex-1">
-              Linear
-            </ToggleGroupItem>
-            <ToggleGroupItem value="sqrt" className="flex-1">
-              Sqrt
-            </ToggleGroupItem>
-            <ToggleGroupItem value="asinh" className="flex-1">
-              Asinh
-            </ToggleGroupItem>
-          </ToggleGroup>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="speed">Blink speed · {fps.toFixed(1)} frames/s</Label>
-          <Slider
-            id="speed"
-            min={0.5}
-            max={6}
-            step={0.5}
-            value={[fps]}
-            onValueChange={([v]) => setFps(v)}
-            disabled={nEpochs < 2}
-            className="py-2"
-          />
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-        <label className="flex cursor-pointer items-center gap-2">
-          <Switch checked={showMarker} onCheckedChange={setShowMarker} />
-          <Crosshair className="size-4" style={{ color: MARKER_COLOR }} />
-          Predicted position
-        </label>
-        <span className="flex items-center gap-2 text-muted-foreground">
-          <span className="inline-block size-3 rounded-sm border border-border" style={{ background: rgb(NO_DATA_RGB) }} />
-          No data
-        </span>
-        {present.has(1) && (
-          <span className="flex items-center gap-2 text-muted-foreground">
-            <span
-              className="inline-block size-3 rounded-sm border border-border"
-              style={{
-                background: `repeating-linear-gradient(-45deg, ${SATURATED_HATCH} 0 1.5px, ${rgb(SATURATED_RGB)} 1.5px 4px)`,
-              }}
-            />
-            Saturated
-          </span>
-        )}
-        {present.has(2) && (
-          <span className="flex items-center gap-2 text-muted-foreground">
-            <span className="inline-block size-3 rounded-sm border border-border" style={{ background: rgb(FLAGGED_RGB) }} />
-            Flagged{frame?.flags ? ` (${Object.keys(frame.flags).join(', ')})` : ''}
-          </span>
-        )}
-        {mode === 'diff' && (
-          <span className="flex items-center gap-2 text-muted-foreground">
-            <span className="inline-block h-3 w-16 rounded-sm bg-gradient-to-r from-[rgb(60,150,255)] via-black to-[rgb(255,190,60)]" />
-            fainter · brighter than the median
-          </span>
-        )}
-      </div>
-
-      {/* epoch facts */}
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-md bg-muted/40 p-3 font-mono text-xs sm:grid-cols-4">
-        <div>
-          <dt className="text-muted-foreground">Epoch</dt>
-          <dd>
-            {epoch.id} · {epoch.label}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">MJD</dt>
-          <dd>
-            {epoch.mjd_start.toFixed(1)}–{epoch.mjd_end.toFixed(1)}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Images stacked</dt>
-          <dd>{frame ? frame.n_images : '—'}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Flagged pixels</dt>
-          <dd>{frame ? `${(frame.flagged_fraction * 100).toFixed(1)}%` : '—'}</dd>
-        </div>
-        <div className="col-span-2 sm:col-span-4">
-          <dt className="text-muted-foreground">Display range ({data.units})</dt>
-          <dd>
-            {formatValue(lo)} … {formatValue(hi)}
-          </dd>
-        </div>
-      </dl>
-      <p className="text-xs text-muted-foreground">
-        Keyboard: <kbd className="rounded border px-1">Space</kbd> play/pause,{' '}
-        <kbd className="rounded border px-1">←</kbd> <kbd className="rounded border px-1">→</kbd> step epochs.
-      </p>
+        {/* epoch facts */}
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-md bg-muted/40 p-3 font-mono text-xs sm:grid-cols-4">
+          <div>
+            <dt className="text-muted-foreground">Epoch</dt>
+            <dd>
+              {epoch.id} · {epoch.label}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">MJD</dt>
+            <dd>
+              {epoch.mjd_start.toFixed(1)}–{epoch.mjd_end.toFixed(1)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Images stacked</dt>
+            <dd>{frame ? frame.n_images : '—'}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Flagged pixels</dt>
+            <dd>{frame ? `${(frame.flagged_fraction * 100).toFixed(1)}%` : '—'}</dd>
+          </div>
+          <div className="col-span-2 sm:col-span-4">
+            <dt className="text-muted-foreground">Display range ({data.units})</dt>
+            <dd>
+              {formatValue(lo)} … {formatValue(hi)}
+            </dd>
+          </div>
+        </dl>
+        <p className="text-xs text-muted-foreground">
+          Keyboard: <kbd className="rounded border px-1">Space</kbd> play/pause,{' '}
+          <kbd className="rounded border px-1">←</kbd> <kbd className="rounded border px-1">→</kbd> step epochs.
+        </p>
+        </>
+      )}
     </div>
   )
 }

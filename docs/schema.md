@@ -31,7 +31,28 @@ motion?: {                           # only for targets with a known proper moti
   search: { x, y, radius_px },                     # search disc shared by all epochs
   reason: null | "saturated" | "ambiguous" | "faint" | "no_data",
   centroids: [{ epoch, x, y, peak_x, peak_y, snr }],   # chosen detector, screen px
-  null_test: null | { x, y, measured_px | null, detector, measurable, reason }   # stationary reference star
+  null_test: null | { x, y, measured_px, detector, measurable, min_snr, reason }   # stationary reference star, measured in `detector` (ALL/D1-D3)
+}
+
+lightcurve?: {                       # every target (planetx/photometry.py; `planetx annotate` or build)
+  method: "fixed_aperture", units: "mJy",
+  centre: { x, y },                  # mean predicted position: ONE aperture centre for all epochs
+  track_px,                          # predicted shift first -> last epoch (a mover drifts across the aperture)
+  excluded_warn_frac: 0.1,           # many_excluded = n_excluded / n_aperture > this (UI: hollow point)
+  comp_min_snr: 10,
+  detectors: {                       # D1..D6 only; ALL is not measured (mixes detectors differently per epoch)
+    D1: { mode: "aperture" | "outer_glow",
+          label: "aperture flux" | "outer-glow brightness (core saturated | core flagged | core blank, likely saturated)",
+          measurable, reason: null | "core_too_large",
+          aperture_px: [r0, r1],     # [0, 2.5] or the outer-glow ring around a blank core
+          annulus_px: [r0, r1],      # background ring (median)
+          r_core?,                   # outer_glow: radius of the blank core (union over epochs), px
+          normalised,                # true: rel = flux / comparison star in the same frame
+          comparison: null | { x, y, min_snr },
+          points: [{ epoch, mjd, flux | null, flux_err | null, rel | null, rel_err | null,
+                     n_aperture, n_excluded | null, n_bg | null, many_excluded }] },
+    ...
+  }
 }
 
 ## web/public/data/targets/<id>.spectrum.json   (per-exposure samples, loaded on the first click)
@@ -134,3 +155,9 @@ then the Harvard mirror). 404 = not found, 502 = Sesame unreachable, 422 = empty
   ra, dec, pmra, pmdec,              # J2000, mas/yr (pmra includes cos dec)
   epoch, ra_epoch, dec_epoch }       # moved by proper motion to the grid epoch: centre the live query here
 ```
+
+### POST /photometry  `{ pixel_scale_arcsec, epochs: [{ id, mjd_start, mjd_end, predicted_px: {x, y}, frames: { D1..D6: { pixels, reasons? } } }] }`
+The light curve (same object as `lightcurve` above) of frames the client already holds: a live
+view's mean-stacked frames. `/target/refine` returns only per-call deltas and the server keeps no
+state, so the client sends its stack. Pure computation, no archive access. 422 = frames not
+square / not all the same size / unknown frame key (max 16 epochs, 64 x 64 px).

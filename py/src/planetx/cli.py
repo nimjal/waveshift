@@ -63,8 +63,9 @@ def build(only: list[str] | None = None) -> None:
 
 def annotate(only: list[str] | None = None) -> None:
     """Recompute derived fields of already-built target files without touching the archive:
-    `motion` (motion.measure_motion) for every target with a known proper motion."""
-    from . import motion
+    `motion` (motion.measure_motion) for every target with a known proper motion, and
+    `lightcurve` (photometry.measure_lightcurve) for every target. manifest.json is not touched."""
+    from . import motion, photometry
 
     out = config.web_data_dir() / "targets"
     for cfg in config.load_targets():
@@ -80,11 +81,16 @@ def annotate(only: list[str] | None = None) -> None:
         data.pop("motion", None)
         if m is not None:
             data["motion"] = m
+        lc = photometry.measure_lightcurve(data)
+        data.pop("lightcurve", None)
+        if lc is not None:
+            data["lightcurve"] = lc
         write_json(path, data)
         desc = ("no motion" if m is None else
                 f"{m['measured_px']:.2f} px vs {m['predicted_px']:.2f} predicted ({m['detector']})"
                 if m["measurable"] else f"not measurable ({m['reason']})")
-        print(f"  ✓ {cfg['id']}: {desc}", flush=True)
+        n_lc = sum(d["measurable"] for d in (lc or {}).get("detectors", {}).values())
+        print(f"  ✓ {cfg['id']}: {desc}; light curve in {n_lc} detectors", flush=True)
 
 
 def main() -> None:
@@ -94,7 +100,7 @@ def main() -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build", help="build curated targets into web/public/data")
     b.add_argument("ids", nargs="*", help="only these target ids")
-    a = sub.add_parser("annotate", help="recompute derived fields (motion) of built target files")
+    a = sub.add_parser("annotate", help="recompute derived fields (motion, lightcurve) of built target files")
     a.add_argument("ids", nargs="*", help="only these target ids")
     args = p.parse_args()
     if args.cmd == "build":

@@ -23,12 +23,18 @@ and starting red avoids blue neighbours.
   7. measured_px = distance between the first and last epoch's centroids;
      predicted_px = distance between the first and last epoch's predicted positions.
 
-Null test (measure_at / null_test): exactly the same code path (detector order included) run on a
-stationary reference star, with predicted motion 0 (every predicted position = the star's pixel).
-The reference star is picked automatically (pick_reference_star) on the epoch-mean ALL frame: the
-brightest isolated local maximum that is >= 5 px from the target's predicted track and from the
-grid edges and has no null pixel in its 5 x 5 window in any epoch. A field with no such star
-(e.g. a bright target's glow or saturated wings everywhere) gets no null test. Its measured shift shows the
+Null test (measure_at / null_test): the same measurement (_measure: search disc, peak, 5 x 5
+centroid, guards) run on a stationary reference star, with predicted motion 0 (every predicted
+position = the star's pixel). The star and its detector are picked automatically:
+  - candidates per detector (pick_reference_star), on the epoch-mean frame of ALL, D1, D2, D3:
+    isolated local maxima >= REF_MIN_DIST (5 px) from the target's predicted track, >= REF_EDGE
+    (3 px) from the grid edges (the 5 x 5 window still fits), no null pixel in their 5 x 5 window
+    in any epoch;
+  - per detector, the brightest candidate that is measurable in EVERY epoch of that detector;
+  - across detectors, the one with the highest S/N in its weakest epoch (S/N compares fairly
+    between detectors; raw MJy/sr doesn't). It is measured in that detector.
+A field with no such star (e.g. a bright target's glow or saturated wings everywhere) gets no
+null test. Its measured shift shows the
 method's noise floor and bias. It should be ~0.
 
 Everything is in screen pixels of the stacked frames (6.15"/px), first vs last epoch. A centroid
@@ -44,7 +50,9 @@ HALF = 2              # centroid window = (2*HALF+1)^2 = 5 x 5, centred on the e
 SEARCH_PAD = 3.0      # search radius = half the predicted track length + this (px)
 MIN_SNR = 3.0         # on the peak
 MAX_EXTRA_JUMP = 2.0  # peak jump allowed between consecutive epochs beyond the predicted step (px)
-REF_MIN_DIST = 5.0    # reference star: min distance from the target track and the grid edges (px)
+REF_MIN_DIST = 5.0    # reference star: min distance from the target's predicted track (px)
+REF_EDGE = 3          # reference star: min distance from the grid edges (px); 5 x 5 window fits
+REF_DETECTORS = ["ALL", "D1", "D2", "D3"]   # where reference stars are looked for
 SATURATED = "1"       # reason code (docs/schema.md)
 REASON_ORDER = ("saturated", "ambiguous", "faint", "no_data")   # most telling first
 
@@ -152,16 +160,15 @@ def _dist_to_segment(px: np.ndarray, py: np.ndarray, a: tuple[float, float], b: 
     return np.hypot(px - (ax + t * dx), py - (ay + t * dy))
 
 
-def pick_reference_star(data: dict, key: str) -> tuple[int, int] | None:
-    """A clearly isolated, unsaturated, presumably stationary star in frames[key], as screen
-    pixel (x, y), or None. On the epoch-mean frame: local maxima (>= all 8 neighbours) that are
-      - >= REF_MIN_DIST px from the target's predicted track and from the grid edges,
+def pick_reference_star(data: dict, key: str) -> list[tuple[int, int]]:
+    """Candidate isolated, unsaturated, presumably stationary stars in frames[key], as screen
+    pixels (x, y), brightest first. On the epoch-mean frame: local maxima (>= all 8 neighbours) that are
+      - >= REF_MIN_DIST px from the target's predicted track and >= REF_EDGE px from the grid edges,
       - free of null pixels in their 5 x 5 window in EVERY epoch (unsaturated, covered),
-      - isolated: no other local maximum within 3 px brighter than 30% of this one,
-    and of those the brightest."""
+      - isolated: no other local maximum within 3 px brighter than 30% of this one."""
     eps = data.get("epochs", [])
     if len(eps) < 2 or not all(key in e["frames"] for e in eps):
-        return None
+        return []
     import warnings
 
     stack = np.stack([_image(e["frames"][key]) for e in eps])
@@ -177,30 +184,38 @@ def pick_reference_star(data: dict, key: str) -> tuple[int, int] | None:
     yy, xx = np.mgrid[:n, :n]
     p = [(e["predicted_px"]["x"], e["predicted_px"]["y"]) for e in eps]
     far = _dist_to_segment(xx, yy, p[0], p[-1]) >= REF_MIN_DIST
-    inside = (xx >= REF_MIN_DIST) & (yy >= REF_MIN_DIST) & (xx <= n - 1 - REF_MIN_DIST) & (yy <= n - 1 - REF_MIN_DIST)
+    inside = (xx >= REF_EDGE) & (yy >= REF_EDGE) & (xx <= n - 1 - REF_EDGE) & (yy <= n - 1 - REF_EDGE)
     is_max = np.isfinite(sig) & (sig > 0) & (sig >= neigh)
     cands = [(float(sig[y, x]), int(x), int(y)) for y, x in zip(*np.nonzero(is_max & far & inside))]
     maxima = [(float(sig[y, x]), int(x), int(y)) for y, x in zip(*np.nonzero(is_max))]
+    out = []
     for s, x, y in sorted(cands, reverse=True):
         if np.isnan(stack[:, y - HALF:y + HALF + 1, x - HALF:x + HALF + 1]).any():
             continue
         if any(0 < np.hypot(x2 - x, y2 - y) <= 3 and s2 > 0.3 * s for s2, x2, y2 in maxima):
             continue
-        return x, y
-    return None
+        out.append((x, y))
+    return out
 
 
 def null_test(data: dict) -> dict | None:
-    """measure_at() on pick_reference_star(data, 'ALL'): the target's code path, predicted motion 0.
-    -> {x, y, measured_px | None, detector, measurable, reason} or None if no star qualifies."""
-    star = pick_reference_star(data, "ALL")
-    if star is None:
+    """The target's measurement on a stationary reference star (predicted motion 0), in the
+    detector where that star is brightest and measurable in every epoch (see module docstring).
+    -> {x, y, measured_px, detector, measurable, min_snr, reason} or None if no star qualifies."""
+    best = None
+    for key in REF_DETECTORS:
+        for x, y in pick_reference_star(data, key):          # brightest first
+            m = measure_at(data, x, y, detectors=[key])
+            if m is not None and m["measurable"]:
+                snr = min(c["snr"] for c in m["centroids"])  # weakest epoch
+                if best is None or snr > best[0]:
+                    best = (snr, key, x, y, m)
+                break                                          # this detector's brightest measurable
+    if best is None:
         return None
-    m = measure_at(data, *star)
-    if m is None:
-        return None
-    return {"x": star[0], "y": star[1], "measured_px": m["measured_px"], "detector": m["detector"],
-            "measurable": m["measurable"], "reason": m["reason"]}
+    snr, key, x, y, m = best
+    return {"x": x, "y": y, "measured_px": m["measured_px"], "detector": key,
+            "measurable": True, "min_snr": round(snr, 1), "reason": None}
 
 
 def measure_motion(data: dict) -> dict | None:

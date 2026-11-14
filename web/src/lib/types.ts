@@ -83,15 +83,66 @@ export interface Motion {
   to_epoch: string
   reason: null | 'saturated' | 'ambiguous' | 'faint' | 'no_data'
   centroids: { epoch: string; x: number; y: number; peak_x: number; peak_y: number; snr: number }[]
-  /** same measurement on a stationary reference star (predicted 0): the method's noise floor */
+  /** same measurement on a stationary reference star (predicted 0): a bias check, should be ~0 */
   null_test: null | {
     x: number
     y: number
     measured_px: number | null
     detector: string | null
     measurable: boolean
+    /** S/N of the star's peak in its weakest epoch */
+    min_snr?: number
     reason: Motion['reason']
   }
+}
+
+/** One epoch of the light curve (planetx/photometry.py). */
+export interface LightcurvePoint {
+  epoch: string
+  /** middle of the epoch */
+  mjd: number
+  /** mJy; null = not measured (too few background pixels) */
+  flux: number | null
+  flux_err: number | null
+  /** flux / comparison-star flux in the same frame; null when not normalised */
+  rel: number | null
+  rel_err: number | null
+  /** pixels in the aperture (or outer-glow ring) and how many of them were blank and left out */
+  n_aperture: number
+  n_excluded: number | null
+  n_bg: number | null
+  /** n_excluded / n_aperture > Lightcurve.excluded_warn_frac: drawn hollow, value biased low */
+  many_excluded: boolean
+}
+
+export interface LightcurveDetector {
+  /** 'outer_glow' = the core is blank (saturated): a ring around it is measured, not the total flux */
+  mode: 'aperture' | 'outer_glow'
+  /** e.g. "aperture flux", "outer-glow brightness (core saturated)" */
+  label: string
+  measurable: boolean
+  reason: null | 'core_too_large'
+  /** [inner, outer] radius in px (inner 0 for a plain aperture) */
+  aperture_px?: [number, number]
+  annulus_px?: [number, number]
+  r_core?: number
+  normalised: boolean
+  comparison: { x: number; y: number; min_snr: number } | null
+  points: LightcurvePoint[]
+}
+
+/** Fixed-aperture photometry per epoch per detector (planetx/photometry.py). */
+export interface Lightcurve {
+  method: 'fixed_aperture'
+  units: 'mJy'
+  /** aperture centre (screen px), the same in every epoch */
+  centre: { x: number; y: number }
+  /** predicted shift first -> last epoch (px): a mover drifts across the fixed aperture */
+  track_px: number
+  excluded_warn_frac: number
+  comp_min_snr: number
+  /** D1..D6 (ALL is not measured: it mixes detectors differently in each epoch) */
+  detectors: Record<string, LightcurveDetector>
 }
 
 export interface TargetData {
@@ -107,6 +158,8 @@ export interface TargetData {
   epochs: Epoch[]
   /** curated targets with a known proper motion only */
   motion?: Motion
+  /** curated targets (planetx annotate / build); live views fetch it from POST /photometry */
+  lightcurve?: Lightcurve
 }
 
 /** Where the currently shown data came from. */

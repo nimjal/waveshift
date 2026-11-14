@@ -4,7 +4,7 @@
 //     then POST {VITE_API_URL}/target/refine until done (see lib/live.ts)
 
 import { type LivePlan, looksLikePlan, looksLikeRefine, type RefineResponse } from './live'
-import type { SpectrumData, TargetData, TargetIndexEntry } from './types'
+import type { Lightcurve, SpectrumData, TargetData, TargetIndexEntry } from './types'
 
 // ---------------------------------------------------------------------------
 // Config
@@ -137,6 +137,24 @@ export function loadCuratedTarget(entry: TargetIndexEntry): Promise<TargetData> 
   return p
 }
 
+export interface Manifest {
+  /** when the curated targets were last built (ISO 8601) */
+  generated_at: string
+  /** IRSA SIA collections queried (py/config/sources.toml); the live API uses the same config */
+  collections: string[]
+}
+
+/** manifest.json: build date + collections, for the data-freshness line. null if missing. */
+export async function loadManifest(): Promise<Manifest | null> {
+  try {
+    const m = (await fetchStaticJson('manifest.json')) as Partial<Manifest> | null
+    if (!m || typeof m.generated_at !== 'string' || !Array.isArray(m.collections)) return null
+    return { generated_at: m.generated_at, collections: m.collections }
+  } catch {
+    return null
+  }
+}
+
 /** Warm the cache for a curated target without waiting on it (e.g. on hover). */
 export function prefetchCuratedTarget(entry: TargetIndexEntry): void {
   loadCuratedTarget(entry).catch(() => {})
@@ -244,6 +262,39 @@ export async function refineLive(
     throw new ApiError('bad-response', 'The API returned data in an unexpected format.', { status })
   }
   return body
+}
+
+/**
+ * POST /photometry: the light curve of frames we already hold (a live view's mean stack).
+ * /target/refine only returns per-call deltas, so the server can't measure the full stack
+ * itself; we send it. Detectors D1-D6 only (photometry skips ALL).
+ */
+export async function fetchLightcurve(data: TargetData, signal?: AbortSignal): Promise<Lightcurve> {
+  const epochs = data.epochs.map((e) => ({
+    id: e.id,
+    mjd_start: e.mjd_start,
+    mjd_end: e.mjd_end,
+    predicted_px: e.predicted_px,
+    frames: Object.fromEntries(
+      Object.entries(e.frames)
+        .filter(([k]) => /^D[1-6]$/.test(k))
+        .map(([k, f]) => [k, f.reasons ? { pixels: f.pixels, reasons: f.reasons } : { pixels: f.pixels }]),
+    ),
+  }))
+  const { body, status } = await apiJson(
+    '/photometry',
+    {
+      method: 'POST',
+      body: JSON.stringify({ pixel_scale_arcsec: data.grid.pixel_scale_arcsec, epochs }),
+      headers: { 'Content-Type': 'application/json' },
+    },
+    signal,
+  )
+  const lc = body as Partial<Lightcurve> | null
+  if (!lc || typeof lc !== 'object' || !lc.detectors || typeof lc.detectors !== 'object') {
+    throw new ApiError('bad-response', 'The API returned data in an unexpected format.', { status })
+  }
+  return lc as Lightcurve
 }
 
 /** GET /resolve: an object name resolved server-side (curated aliases, then CDS Sesame). */

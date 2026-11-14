@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, Info, Link2, Loader2, Orbit, SearchX, Square, TriangleAlert, X } from 'lucide-react'
+import { Check, CircleHelp, ExternalLink, Info, Link2, Loader2, Orbit, SearchX, Square, TriangleAlert, X } from 'lucide-react'
 import { Popover } from 'radix-ui'
 
 import { BlinkPlayer } from '@/components/BlinkPlayer'
+import { SkyContextPanel } from '@/components/SkyContextPanel'
 import { CuratedList } from '@/components/CuratedList'
+import { Guide } from '@/components/Guide'
 import { CustomPanel, type CustomRequest, type LiveProgress } from '@/components/CustomPanel'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -17,12 +19,15 @@ import {
   loadCuratedIndex,
   loadCuratedSpectrum,
   loadCuratedTarget,
+  loadManifest,
+  type Manifest,
   refineLive,
   StaticDataError,
 } from '@/lib/api'
 import { describeFailures, LiveStack } from '@/lib/live'
 import { coreSaturated, motionPxPerYear } from '@/lib/render'
 import type { DataSource, Motion, SpectrumData, TargetData, TargetIndexEntry } from '@/lib/types'
+import { guideSeen } from '@/lib/prefs'
 import { copyText, type DisplayState, readUrl, sameSource, toSearch } from '@/lib/url'
 
 type IndexState =
@@ -42,6 +47,32 @@ interface Shown {
 
 function fmtCoord(v: number, signed = false): string {
   return `${signed && v >= 0 ? '+' : ''}${v.toFixed(4)}°`
+}
+
+const REPO_URL = 'https://github.com/nimjal/waveshift'
+
+/** GitHub mark (Octicons mark-github, MIT); lucide no longer ships brand icons. */
+function GitHubMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" className={className} fill="currentColor">
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+    </svg>
+  )
+}
+
+function SourceLink() {
+  return (
+    <a
+      href={REPO_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+      aria-label="Source code on GitHub (opens in a new tab)"
+    >
+      <GitHubMark className="size-4" />
+      Source
+    </a>
+  )
 }
 
 function CopyLinkButton() {
@@ -100,7 +131,7 @@ function MotionLine({ m }: { m: Motion }) {
         <>
           {' '}
           The reference star (x {nt.x}, y {nt.y}{nt.detector ? `, ${nt.detector}` : ''}) doesn't move, so its
-          shift shows the method's noise floor.
+          shift should be ~0: a check that the method doesn't invent motion, not the error on the target's shift.
         </>
       )}
     </span>
@@ -219,6 +250,8 @@ function TargetHeader({ shown }: { shown: Shown }) {
 
 export default function App() {
   const [initialUrl] = useState(() => readUrl())
+  /** ?embed=1: player only, for an <iframe> on another site */
+  const embed = initialUrl.embed
   const initialCustom = initialUrl.source?.kind === 'custom' ? initialUrl.source : null
   const [tab, setTab] = useState<Tab>(initialCustom ? 'custom' : 'curated')
   const [display, setDisplay] = useState<DisplayState>(initialUrl.display)
@@ -235,6 +268,9 @@ export default function App() {
   const [curatedError, setCuratedError] = useState<string | null>(null)
   const [customReq, setCustomReq] = useState<CustomRequest>({ status: 'idle' })
   const [customResult, setCustomResult] = useState<Shown | null>(null)
+  const [manifest, setManifest] = useState<Manifest | null>(null)
+  /** first-time visitors get the guide once; the "?" button reopens it */
+  const [guideOpen, setGuideOpen] = useState(() => !embed && !guideSeen())
 
   const abortRef = useRef<AbortController | null>(null)
   /** the live session (plan + running sums + cursor) so Stop can be resumed */
@@ -289,6 +325,15 @@ export default function App() {
       cancelled = true
     }
   }, [selectCurated, initialUrl])
+
+  useEffect(() => {
+    if (embed) return
+    let cancelled = false
+    void loadManifest().then((m) => !cancelled && setManifest(m))
+    return () => {
+      cancelled = true
+    }
+  }, [embed])
 
   // Live refinement. Fired from user actions (never from an effect) so StrictMode can't
   // double-fire it. GET the plan, then POST refine with the cursor until done; each
@@ -447,7 +492,7 @@ export default function App() {
       restoringTo.current = null
       return
     }
-    const search = toSearch(shownSource, display)
+    const search = toSearch(shownSource, display, embed)
     const landing = firstWrite.current
     firstWrite.current = false
     if (search === window.location.search && !window.location.hash) return
@@ -456,7 +501,7 @@ export default function App() {
     const url = `${window.location.pathname}${search}`
     if (push) window.history.pushState(null, '', url)
     else window.history.replaceState(null, '', url)
-  }, [shownSource, display])
+  }, [shownSource, display, embed])
 
   // URL → state on Back / Forward.
   const latest = useRef({ index, customResult, shown })
@@ -518,16 +563,82 @@ export default function App() {
     setSelectedId(null)
   }
 
+  if (embed) {
+    const src = shownSource ?? initialUrl.source
+    const full = `${window.location.pathname}${toSearch(src, display, false)}`
+    let status: string | null = null
+    if (!shown || shown.data.epochs.length === 0) {
+      if (shown) status = 'No SPHEREx coverage here yet.'
+      else if (initialCustom && !API_URL) status = 'Custom coordinates need the live API, which this site does not have.'
+      else if (customReq.status === 'error') status = customReq.error.message
+      else if (index.status === 'error') status = index.message
+      else if (curatedError) status = curatedError
+      else if (customLoading) status = 'Fetching SPHEREx frames…'
+      else status = 'Loading…'
+    }
+    return (
+      <div className="flex min-h-svh flex-col gap-2 bg-background p-2 text-foreground">
+        {status ? (
+          <div className="flex min-h-60 flex-1 flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
+            {status.endsWith('…') && <Loader2 className="size-6 animate-spin" />}
+            <p>{status}</p>
+          </div>
+        ) : (
+          shown && (
+            <BlinkPlayer
+              key={`${shown.source.kind}:${shown.data.target.id}:${shown.data.generated_at}`}
+              data={shown.data}
+              display={display}
+              onDisplayChange={setDisplay}
+              embed
+            />
+          )
+        )}
+        {notice.length > 0 && (
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            Part of this link couldn't be used ({notice.join('; ')}); showing defaults instead.
+          </p>
+        )}
+        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span className="truncate">
+            {shown?.data.target.name ?? ''}
+            {liveProgress && customReq.status === 'refining' && ` · refining ${liveProgress.depth}/${liveProgress.total}`}
+          </span>
+          <a
+            href={full}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex shrink-0 items-center gap-1 hover:text-foreground"
+          >
+            Open in Waveshift <ExternalLink className="size-3" />
+          </a>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-svh bg-background text-foreground">
       <header className="border-b border-border">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-4">
-          <Orbit className="size-7 text-primary" />
+          <Orbit className="size-7 shrink-0 text-primary" />
           <div>
             <h1 className="text-lg leading-tight font-semibold">Planet X · SPHEREx Blink</h1>
             <p className="text-sm text-muted-foreground">
               Flip between observation epochs. Stars stay put; nearby and moving objects jump.
             </p>
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label="How to read a blink"
+              title="How to read a blink"
+              onClick={() => setGuideOpen(true)}
+            >
+              <CircleHelp />
+            </Button>
+            <SourceLink />
           </div>
         </div>
       </header>
@@ -730,14 +841,40 @@ export default function App() {
             </Card>
           )}
 
+          {shown && (
+            <div className="mt-4">
+              <SkyContextPanel
+                ra={shown.data.grid.center_ra}
+                dec={shown.data.grid.center_dec}
+                sideDeg={(shown.data.grid.size_px * shown.data.grid.pixel_scale_arcsec) / 3600}
+                name={shown.data.target.name}
+              />
+            </div>
+          )}
+
           <p className="mt-4 text-xs text-muted-foreground">
             Images: NASA SPHEREx via IRSA, background-subtracted and stacked per epoch (median for curated targets, mean
             for live views). Orientation: north up,
             east left. A real mover shifts between epochs along the predicted track; artefacts and variable stars
             change brightness without moving.
           </p>
+          {manifest && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Curated targets built{' '}
+              {new Date(manifest.generated_at).toLocaleDateString(undefined, {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+              })}{' '}
+              ·{' '}
+              {API_URL
+                ? `Live views query IRSA at request time (collections: ${manifest.collections.join(', ')})`
+                : 'Live views are not available on this site'}
+            </p>
+          )}
         </section>
       </main>
+      <Guide open={guideOpen} onOpenChange={setGuideOpen} />
     </div>
   )
 }

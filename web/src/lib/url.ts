@@ -2,6 +2,7 @@
 //   ?target=<id>                curated target
 //   ?ra=<deg>&dec=<deg>         custom position (starts a live query when opened)
 //   &det=ALL|D1..D6  &view=blink|diff  &stretch=linear|sqrt|asinh   (optional)
+//   &embed=1                    player only (for an <iframe>); kept when the view changes
 // Older links used the hash (#target=… / #ra=…&dec=…); those are still read.
 // Parsing never throws: anything unusable is dropped and reported in `problems`, so a bad
 // link falls back to the default view with a notice instead of a blank page.
@@ -26,6 +27,8 @@ export interface UrlState {
   display: DisplayState
   /** human-readable notes about parameters that were ignored */
   problems: string[]
+  /** ?embed=1: render only the player */
+  embed: boolean
 }
 
 const MODES: readonly ViewMode[] = ['blink', 'diff']
@@ -79,7 +82,7 @@ export function readUrl(loc: Pick<Location, 'search' | 'hash'> = window.location
     if ((STRETCHES as readonly string[]).includes(stretch)) display.stretch = stretch as Stretch
     else problems.push(`unknown stretch "${stretch.slice(0, 20)}"`)
   }
-  return { source, display, problems }
+  return { source, display, problems, embed: q.get('embed') === '1' }
 }
 
 /** Coordinates in links: 5 decimals (~0.04″), trailing zeros dropped. */
@@ -88,7 +91,7 @@ function fmt(v: number): string {
 }
 
 /** The query string for a view; defaults are left out so links stay short. */
-export function toSearch(source: UrlSource | null, display: DisplayState): string {
+export function toSearch(source: UrlSource | null, display: DisplayState, embed = false): string {
   const q = new URLSearchParams()
   if (source?.kind === 'curated') q.set('target', source.id)
   else if (source?.kind === 'custom') {
@@ -98,6 +101,7 @@ export function toSearch(source: UrlSource | null, display: DisplayState): strin
   if (display.det !== DEFAULT_DISPLAY.det) q.set('det', display.det)
   if (display.mode !== DEFAULT_DISPLAY.mode) q.set('view', display.mode)
   if (display.stretch !== DEFAULT_DISPLAY.stretch) q.set('stretch', display.stretch)
+  if (embed) q.set('embed', '1')
   const s = q.toString()
   return s ? `?${s}` : ''
 }

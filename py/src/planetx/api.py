@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from . import config, live, targets
+from . import config, live, photometry, targets
 
 log = logging.getLogger(__name__)
 
@@ -84,3 +84,47 @@ def refine(req: RefineRequest) -> dict:
     except Exception as e:  # noqa: BLE001
         log.exception("refine failed")
         raise HTTPException(502, f"upstream failure: {type(e).__name__}: {e}") from e
+
+
+class PhotFrame(BaseModel):
+    pixels: list[list[float | None]] = Field(..., max_length=64)
+    reasons: list[str] | None = Field(None, max_length=64)
+
+
+class PhotEpoch(BaseModel):
+    id: str = Field(..., max_length=8)
+    mjd_start: float
+    mjd_end: float
+    predicted_px: dict[str, float]
+    frames: dict[str, PhotFrame] = Field(..., max_length=8)
+
+
+class PhotometryRequest(BaseModel):
+    pixel_scale_arcsec: float = Field(..., gt=0, lt=100)
+    epochs: list[PhotEpoch] = Field(..., min_length=1, max_length=16)
+
+
+@app.post("/photometry")
+def photometry_endpoint(req: PhotometryRequest) -> dict:
+    """Light curve (photometry.measure_lightcurve) of frames the client already has: the live
+    view's mean-stacked frames. /target/refine only returns per-call deltas, and the server keeps
+    no state, so the client sends the stack it holds. Pure computation, no archive access."""
+
+    epochs = []
+    for e in req.epochs:
+        if "x" not in e.predicted_px or "y" not in e.predicted_px:
+            raise HTTPException(422, f"epoch {e.id}: predicted_px needs x and y")
+        frames = {}
+        for k, f in e.frames.items():
+            if k not in photometry.FRAME_KEYS and k != "ALL":
+                raise HTTPException(422, f"unknown frame key {k!r}")
+            n = len(f.pixels)
+            if any(len(r) != n for r in f.pixels) or (f.reasons and (len(f.reasons) != n or any(len(r) != n for r in f.reasons))):
+                raise HTTPException(422, f"epoch {e.id} {k}: frames must be square")
+            frames[k] = f.model_dump(exclude_none=True)
+        epochs.append({"id": e.id, "mjd_start": e.mjd_start, "mjd_end": e.mjd_end,
+                       "predicted_px": e.predicted_px, "frames": frames})
+    sizes = {len(f["pixels"]) for e in epochs for f in e["frames"].values()}
+    if len(sizes) > 1:
+        raise HTTPException(422, "all frames must have the same size")
+    return photometry.measure_lightcurve({"grid": {"pixel_scale_arcsec": req.pixel_scale_arcsec}, "epochs": epochs}) or {}

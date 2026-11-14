@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import cutouts, motion, query, spectral, stack    # call as module.func so tests can swap them
+from . import cutouts, motion, photometry, query, spectral, stack    # call as module.func so tests can swap them
 from .export import reasons_jsonable, to_jsonable
 from .targets import Target
 
@@ -147,6 +147,9 @@ def build_target(target: Target, sources: dict, cache: Path,
         m = motion.measure_motion(out)
         if m is not None:
             out["motion"] = m
+    lc = photometry.measure_lightcurve(out)   # brightness per epoch per detector
+    if lc is not None:
+        out["lightcurve"] = lc
     if spectrum:
         ep_id = {s["index"]: s["id"] for s in query.epoch_summary(images)}
         out["spectrum"] = spectrum_sidecar(
