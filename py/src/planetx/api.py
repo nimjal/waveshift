@@ -1,27 +1,28 @@
-"""Live requests: any RA/Dec -> the SAME JSON shape as the curated files.
-CORS open for GET; never add allow_credentials=True with allow_origins=['*']."""
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException, Query  # noqa: F401
+import json
 
-from . import config, targets          # noqa: F401
-from .export import write_json         # noqa: F401
-from .pipeline import build_target     # noqa: F401  (tests swap api.build_target)
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+
+from . import config, targets
+from .export import write_json
+from .pipeline import build_target     # tests swap api.build_target
 
 app = FastAPI(title="Planet X API")
-# TODO: add CORSMiddleware (allow_origins=["*"], allow_methods=["GET"])
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"])
 
 
 @app.get("/health")
 def health() -> dict:
     """{'ok': True}"""
-    raise NotImplementedError
+    return {"ok": True}
 
 
 @app.get("/target")
 def target(ra: float = Query(..., ge=0, lt=360),
            dec: float = Query(..., ge=-90, le=90),
-           full: bool = Query(False)) -> dict:
+           full: bool = Query(False, description="all images instead of a capped sample")) -> dict:
     """Plain `def` (not async): FastAPI runs it in a thread pool, so slow IRSA calls
     don't block other requests.
     - cache file: config.cache_dir()/'live'/f'live_{ra:.4f}_{dec:+.4f}_{"full"|"cap"}.json'
@@ -30,4 +31,19 @@ def target(ra: float = Query(..., ge=0, lt=360),
       max_per_group=None if full else sources['live']['max_per_group'])
       (call it as the module-level name `build_target` so tests can swap it)
     - upstream exception -> HTTPException(502); write the cache; return the dict."""
-    raise NotImplementedError
+
+    sources = config.load_sources()
+    key = f"live_{ra:.4f}_{dec:+.4f}_{'full' if full else 'cap'}.json"
+    cached = config.cache_dir() / "live" / key
+
+    if cached.exists():
+        return json.loads(cached.read_text())
+    cap = None if full else int(sources.get("live", {}).get("max_per_group", 4))
+
+    try:
+        data = build_target(targets.adhoc(ra, dec), sources, config.cache_dir(), max_per_group=cap)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"upstream failure: {type(e).__name__}: {e}") from e
+    
+    write_json(cached, data)
+    return data

@@ -1,4 +1,3 @@
-"""Which SPHEREx images cover a position, grouped into epochs."""
 from __future__ import annotations
 
 import astropy.units as u
@@ -29,6 +28,7 @@ def find_images(coord: SkyCoord, collections: list[str],
     - add 'detector' via detector_of(energy_bandpassname)
     - dedupe on (obs_id, detector)
     Returns empty() if nothing anywhere."""
+
     raise NotImplementedError
 
 
@@ -42,9 +42,11 @@ def epoch_summary(images: Table) -> list[dict]:
     """One dict per epoch, in order, with keys:
     index (int), id ('A','B',...), label (mid-date as 'May 2025'),
     mjd_start (min t_min), mjd_end (max t_max), year_mid (decimal year), n_images."""
+
     raise NotImplementedError
 
 
 def detector_ranges(images: Table) -> dict[str, list[float]]:
     """{'D1': [min em_min, max em_max], ...} in MICRONS (metres * 1e6), rounded to 3 dp."""
+    
     raise NotImplementedError
