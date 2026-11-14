@@ -1,0 +1,10 @@
+#!/bin/sh
+# Block the push when the frontend does not build (tsc -b && vite build), the same step Vercel
+# runs for waveshift-app. Enable once per clone: git config core.hooksPath .githooks
+# Note: this builds the working tree, so uncommitted changes in web/ are included.
+root=$(git rev-parse --show-toplevel) || exit 1
+echo "pre-push: npm run build in web/ ..." >&2
+if ! (cd "$root/web" && npm run build) >&2; then
+  echo "pre-push: web build failed, push blocked. Fix the errors above (or bypass with git push --no-verify)." >&2
+  exit 1
+fi

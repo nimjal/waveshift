@@ -173,6 +173,7 @@ just web     # Vite dev server, http://localhost:5173 by default
 - `just build` queries IRSA and downloads cutouts into `py/data/cache/` (git-ignored). To build a subset, run
   `cd py && uv run python -m planetx.cli build barnard r-dra`.
 - `just lint` runs oxlint on the frontend.
+- `git config core.hooksPath .githooks` (once per clone) enables the pre-push hook, which runs `npm run build` in `web/` and blocks the push if it fails.
 - `cd py && uv run python -m planetx.cli annotate` recomputes derived fields (`motion`,
   `lightcurve`) of the built target files without touching the archive (manifest.json is left alone).
 - `just build` reuses cutouts already in `py/data/cache/`, so a rebuild doesn't re-download them.
