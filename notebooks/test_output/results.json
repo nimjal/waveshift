@@ -1,0 +1,573 @@
+{
+ "started": "2026-11-14T09:50:29",
+ "run_live": true,
+ "results": {
+  "import:config": {
+   "section": "imports",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.001
+  },
+  "import:targets": {
+   "section": "imports",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "import:query": {
+   "section": "imports",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.001
+  },
+  "import:cutouts": {
+   "section": "imports",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.014
+  },
+  "import:stack": {
+   "section": "imports",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "import:export": {
+   "section": "imports",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "import:pipeline": {
+   "section": "imports",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "import:cli": {
+   "section": "imports",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "import:api": {
+   "section": "imports",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.137
+  },
+  "config.root": {
+   "section": "config",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "config.load_sources": {
+   "section": "config",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "config.load_targets": {
+   "section": "config",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "config: curated targets are self-contained": {
+   "section": "config",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "config.cache_dir / web_data_dir": {
+   "section": "config",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "Target.at (dec motion)": {
+   "section": "targets",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "Target.at (RA \u00f7 cos dec)": {
+   "section": "targets",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "Target.at (negative dt)": {
+   "section": "targets",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "Target.at (RA wrap)": {
+   "section": "targets",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "Target.info": {
+   "section": "targets",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "targets.resolve (explicit values)": {
+   "section": "targets",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "targets.resolve (no SIMBAD when explicit)": {
+   "section": "targets",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "targets.adhoc": {
+   "section": "targets",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "query.detector_of": {
+   "section": "query",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "query.empty": {
+   "section": "query",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "query.find_images (fake IRSA: filter, merge, dedupe)": {
+   "section": "query",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.08
+  },
+  "query.find_images (no data anywhere)": {
+   "section": "query",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "query.assign_epochs": {
+   "section": "query",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "query.assign_epochs (empty)": {
+   "section": "query",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "query.epoch_summary": {
+   "section": "query",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.001
+  },
+  "query.detector_ranges": {
+   "section": "query",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "cutouts.cutout_url": {
+   "section": "cutouts",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "cutouts.cache_path": {
+   "section": "cutouts",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.001
+  },
+  "cutouts.fetch_cutout (cache hit)": {
+   "section": "cutouts",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "cutouts.fetch_cutout (download + atomic write)": {
+   "section": "cutouts",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.001
+  },
+  "cutouts.fetch_cutout (retries 503)": {
+   "section": "cutouts",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "retried in 3.0s\n",
+   "seconds": 3.001
+  },
+  "cutouts.fetch_cutout (non-FITS \u2192 ValueError)": {
+   "section": "cutouts",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "cutouts.fetch_cutout (404 raises, no retry)": {
+   "section": "cutouts",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "cutouts.fetch_many (order, failure \u2192 None, progress)": {
+   "section": "cutouts",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "cutout failed: https://example.invalid/does-not-exist.fits ([Errno -2] Name or service not known)\n",
+   "seconds": 0.014
+  },
+  "stack.make_grid": {
+   "section": "stack",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.001
+  },
+  "stack.flag_bits": {
+   "section": "stack",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "stack.bad_mask": {
+   "section": "stack",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "FLAGS header has no MSKN* keys \u2014 no pixels masked\n",
+   "seconds": 0.0
+  },
+  "stack.load_cutout": {
+   "section": "stack",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.007
+  },
+  "stack.load_cutout (no IMAGE ext \u2192 HDU 1)": {
+   "section": "stack",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.003
+  },
+  "stack.to_grid (alignment, rotated input)": {
+   "section": "stack",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.214
+  },
+  "stack.to_grid (off footprint \u2192 NaN)": {
+   "section": "stack",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.006
+  },
+  "stack.stack_epoch": {
+   "section": "stack",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "export.to_jsonable": {
+   "section": "export",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "export.write_json": {
+   "section": "export",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "pipeline.build_target (shape, counts, JSON-safe)": {
+   "section": "pipeline",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.038
+  },
+  "pipeline.build_target (star on predicted_px)": {
+   "section": "pipeline",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.0
+  },
+  "pipeline.build_target (max_per_group)": {
+   "section": "pipeline",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.02
+  },
+  "pipeline.build_target (detectors filter)": {
+   "section": "pipeline",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.012
+  },
+  "pipeline.build_target (no images)": {
+   "section": "pipeline",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.001
+  },
+  "cli.build (writes + merges index)": {
+   "section": "cli",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "\u25b6 wise0855 \u2014 WISE 0855-0714\n  \u2713 1 epochs, 7 images\n\u25b6 barnard \u2014 Barnard's Star\n  \u2713 1 epochs, 7 images\n",
+   "seconds": 0.001
+  },
+  "cli.build (one target fails, rest continue)": {
+   "section": "cli",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "\u25b6 wise0855 \u2014 WISE 0855-0714\n  \u2713 0 epochs, 0 images\n\u25b6 barnard \u2014 Barnard's Star\n  \u2717 barnard: RuntimeError: IRSA exploded\n",
+   "seconds": 0.0
+  },
+  "api /target (build, cache, cap, full)": {
+   "section": "api",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.013
+  },
+  "api input validation": {
+   "section": "api",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.003
+  },
+  "api upstream failure -> 502": {
+   "section": "api",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.002
+  },
+  "api CORS": {
+   "section": "api",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "",
+   "seconds": 0.001
+  },
+  "LIVE find_images (WISE 0855)": {
+   "section": "live",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "258 images; epochs ['May 2025', 'Nov 2025', 'May 2026']\n",
+   "seconds": 4.384
+  },
+  "LIVE cutout (units, extensions, flags)": {
+   "section": "live",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "extensions ['PRIMARY', 'IMAGE', 'FLAGS', 'VARIANCE', 'ZODI', 'EPSF', 'WCS-WAVE']; shape (29, 29); 22 flag planes\n",
+   "seconds": 0.004
+  },
+  "LIVE SIMBAD (mirror fallback)": {
+   "section": "live",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "/mnt/data/projects/competitions/space-apps/2026/py/src/planetx/targets.py:90: RuntimeWarning: SIMBAD server simbad.cds.unistra.fr failed (DALServiceError: Unable to access the capabilities endpoint at:); trying next mirror\n  t = _simbad_query(lookup)\nBarnard: ra=269.45208 dec=+4.69336 pm=(-802,10362)\n",
+   "seconds": 2.518
+  },
+  "LIVE build_target (WISE 0855)": {
+   "section": "live-e2e",
+   "status": "pass",
+   "message": "",
+   "hint": "",
+   "traceback": "",
+   "output": "54/258 cutouts used; saved wise0855_live.json\n",
+   "seconds": 21.751
+  }
+ }
+}

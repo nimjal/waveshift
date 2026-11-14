@@ -1,30 +1,56 @@
-# Curated targets. Resolved by SIMBAD (`simbad` name, else `name`) incl. proper motion.
-# Give ra/dec (+ optional pmra/pmdec in mas/yr, ref_epoch) to bypass SIMBAD.
+# Curated targets. Values from SIMBAD (Harvard mirror, 14 Nov 2026): J2000 position,
+# proper motion in mas/yr (pmra includes cos dec). Explicit values = no SIMBAD at build time.
 [[target]]
 id = "wise0855"
 name = "WISE 0855-0714"
-simbad = "WISE J085510.83-071442.5"   # brief: 08h55m10.831s -07d14m42.53s
+simbad = "WISE J085510.83-071442.5"
 kind = "brown dwarf"
+ra = 133.81891
+dec = -7.24705
+pmra = -8123.7
+pmdec = 673.2
+ref_epoch = 2000.0
 
 [[target]]
 id = "barnard"
 name = "Barnard's Star"
+simbad = "Barnard's star"
 kind = "nearby star"
+ra = 269.45208
+dec = 4.69336
+pmra = -801.551
+pmdec = 10362.394
+ref_epoch = 2000.0
 
 [[target]]
 id = "eps-indi-b"
 name = "Epsilon Indi B"
 simbad = "eps Ind B"
 kind = "brown dwarf pair"
+ra = 331.04415
+dec = -56.78284
+pmra = 3981.977
+pmdec = -2466.832
+ref_epoch = 2000.0
 
 [[target]]
 id = "rw-aur"
 name = "RW Aurigae"
 simbad = "RW Aur"
 kind = "variable star"
+ra = 76.95653
+dec = 30.40144
+pmra = 7.23
+pmdec = -20.33
+ref_epoch = 2000.0
 
 [[target]]
 id = "r-dra"
 name = "R Draconis"
 simbad = "R Dra"
 kind = "variable star"
+ra = 248.16761
+dec = 66.75498
+pmra = -20.643
+pmdec = 6.149
+ref_epoch = 2000.0

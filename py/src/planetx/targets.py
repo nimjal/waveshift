@@ -55,17 +55,39 @@ def _num(row, col) -> float:
     return 0.0 if np.ma.is_masked(v) else float(v)
 
 
+SIMBAD_SERVERS = ("simbad.cds.unistra.fr", "simbad.harvard.edu")  # main (Strasbourg), then mirror
+
+
+def _simbad_query(lookup: str):
+    """query_object(lookup) with pmra/pmdec, trying each server in SIMBAD_SERVERS.
+    Falls through to the next server only on errors (network/HTTP/TAP); an empty
+    result ("not found") is returned as-is. If all fail: ConnectionError chained to the last error."""
+
+    import warnings
+
+    from astroquery.simbad import Simbad
+
+    last_err: Exception | None = None
+    for server in SIMBAD_SERVERS:
+        s = Simbad()
+        s.server = server
+        try:
+            s.add_votable_fields("pmra", "pmdec")  # hits the server too (lists TAP fields)
+            return s.query_object(lookup)
+        except Exception as e:  # ConnectionError, Timeout, HTTPError, DALServiceError, ...
+            last_err = e
+            warnings.warn(f"SIMBAD server {server} failed ({type(e).__name__}: {str(e).splitlines()[0] if str(e) else ''}); "
+                          "trying next mirror", RuntimeWarning, stacklevel=2)
+    raise ConnectionError(f"all SIMBAD servers failed for {lookup!r}") from last_err
+
+
 def from_simbad(cfg: dict) -> Target:
     """Look up cfg.get('simbad', cfg['name']) in SIMBAD with extra fields pmra, pmdec.
     astroquery >= 0.4.8 returns lowercase 'ra'/'dec' in degrees; masked pm -> 0.
     SIMBAD positions are epoch J2000 -> ref_epoch=2000. Raise LookupError if not found."""
 
-    from astroquery.simbad import Simbad
-
-    s = Simbad()
-    s.add_votable_fields("pmra", "pmdec")
     lookup = cfg.get("simbad", cfg["name"])
-    t = s.query_object(lookup)
+    t = _simbad_query(lookup)
     if t is None or len(t) == 0:
         raise LookupError(f"SIMBAD could not resolve {lookup!r}")
     row = t[0]
