@@ -33,11 +33,18 @@ def load_targets() -> list[dict]:
 
 
 def cache_dir() -> Path:
-    """<root>/data/cache — create it if missing, return the Path."""
+    """Where every cache file lives (live JSON, FITS cutouts). Resolution order:
+    1. $PLANETX_CACHE_DIR if set
+    2. /tmp/planetx-cache if $VERCEL is set (Vercel's filesystem is read-only except /tmp)
+    3. <root>/data/cache
+    Does NOT create the directory: writers mkdir right before writing."""
 
-    d = root() / "data" / "cache"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    env = os.environ.get("PLANETX_CACHE_DIR")
+    if env:
+        return Path(env)
+    if os.environ.get("VERCEL"):
+        return Path("/tmp/planetx-cache")
+    return root() / "data" / "cache"
 
 
 def web_data_dir() -> Path:

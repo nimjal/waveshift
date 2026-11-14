@@ -148,8 +148,8 @@ export async function checkApiHealth(signal?: AbortSignal): Promise<boolean> {
   try {
     const res = await fetch(`${API_URL}/health`, { signal })
     if (!res.ok) return false
-    const body = (await res.json()) as { ok?: boolean }
-    return body.ok === true
+    const body = (await res.json()) as { status?: string }
+    return body.status === 'ok'
   } catch {
     return false
   }

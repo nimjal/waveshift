@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -52,17 +53,18 @@ def _get(client: httpx.Client, url: str, retries: int) -> httpx.Response:
 
 
 def fetch_cutout(url: str, cache_dir: Path, client: httpx.Client | None = None,
-                 timeout: float = 120.0, retries: int = 4) -> Path:
+                 timeout: float = 120.0, retries: int = 4) -> Path | io.BytesIO:
     """Return cache_path(url). If missing: GET (follow redirects).
     IRSA rate-limits: on 503 / 429 / timeout, retry up to `retries` times with
     backoff (e.g. 1, 2, 4, 8 s). Other HTTP errors -> raise.
     Raise ValueError if the body doesn't start with b'SIMPLE' (not FITS).
-    Write atomically (.part then rename). Close the client only if you created it."""
+    Write atomically (.part then rename). If the cache can't be written (read-only
+    filesystem etc.), log a warning and return the bytes as a BytesIO instead
+    (fits.open accepts either). Close the client only if you created it."""
 
     path = cache_path(url, cache_dir)
     if path.exists() and path.stat().st_size > 0:
         return path
-    path.parent.mkdir(parents=True, exist_ok=True)
     own = client is None
     client = client or httpx.Client(follow_redirects=True, timeout=timeout)
 
@@ -70,18 +72,23 @@ def fetch_cutout(url: str, cache_dir: Path, client: httpx.Client | None = None,
         r = _get(client, url, retries)
         if not r.content.startswith(b"SIMPLE"):
             raise ValueError(f"not a FITS file: {r.text[:200]!r}")
-        tmp = path.with_suffix(".part")
-        tmp.write_bytes(r.content)
-        tmp.replace(path)
     finally:
         if own:
             client.close()
-    
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".part")
+        tmp.write_bytes(r.content)
+        tmp.replace(path)
+    except OSError as e:
+        log.warning("could not cache cutout %s: %s (serving from memory)", path, e)
+        return io.BytesIO(r.content)
     return path
 
 
 def fetch_many(urls: list[str], cache_dir: Path, workers: int = 4,
-               progress: Callable[[int, int], None] | None = None) -> list[Path | None]:
+               progress: Callable[[int, int], None] | None = None) -> list[Path | io.BytesIO | None]:
     """Parallel fetch_cutout (ThreadPoolExecutor + one shared httpx.Client).
     Keep workers low (4): 8 parallel requests got ~30% 503s from IRSA on 14 Nov.
     Same order as urls. A failure becomes None (logged), never kills the batch.
@@ -89,7 +96,7 @@ def fetch_many(urls: list[str], cache_dir: Path, workers: int = 4,
     
     done = 0
 
-    def one(u: str) -> Path | None:
+    def one(u: str) -> Path | io.BytesIO | None:
         nonlocal done
         try:
             return fetch_cutout(u, cache_dir, client)
