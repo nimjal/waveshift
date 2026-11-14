@@ -14,13 +14,70 @@ workers = 4                  # parallel downloads (8 got 503s from IRSA)
 
 [flags]
 # Mask-plane names as given in each cutout's FLAGS header (MSKNnnnn = name, MSKMnnnn = 1<<n,
-# MSKDnnnn = description), treated as bad -> NaN. Order matters: when a blank pixel has
-# several of these set, the first one listed is reported as the reason.
+# MSKDnnnn = description), treated as bad -> NaN. Which plane is REPORTED as the reason for a
+# blank pixel is decided by [reasons] below, not by this order.
 # OVERFLOW/NONLINEAR left out on purpose: masking them punches holes in bright stars.
 # NEVER add SOURCE here — it marks real sources.
 bad = ["TRANSIENT", "SUR_ERROR", "NONFUNC", "MISSING_DATA", "HOT", "COLD", "PERSIST"]
-# Planes that mean "saturated" for a BLANK pixel (reason code 1). SPHEREx has no plane named
-# SATURATED; MSKN0001 = 'OVERFLOW' / MSKD0001 = 'Overflow detected during SUR' is the one.
-# Checked first, before `bad`: saturated pixels also carry SUR_ERROR.
-saturated = ["OVERFLOW"]
 
+# Why a blank (null) pixel is blank (planetx/reasons.py, docs/schema.md). One entry per reason,
+# in PRIORITY ORDER (highest first): a blank pixel takes the first reason that applies, over
+# the native pixels in its interpolation stencil and over every exposure in a stack.
+# `code` = the digit in the JSON `reasons` strings: fixed per reason so reordering never
+# renumbers data. 0 = valid is implicit. saturated MUST stay 1 (motion.py, photometry.py, web).
+# `planes` = FLAGS plane names (from each file's header). A [flags].bad plane in no category
+# here is reported as other_flag with its plane name. Planes that are only informational
+# (SOURCE, GHOST*, CROSSTALK, ...) are deliberately NOT mapped: they don't blank pixels, and a
+# pixel blank for another reason that happens to carry one is not caused by it.
+# not_observed (no exposure's footprint covered the pixel) MUST be last: an exposure that
+# missed a pixel must not hide another exposure's reason for it.
+
+[[reasons.category]]
+key = "saturated"
+code = 1
+label = "Saturated"
+# SPHEREx has no plane named SATURATED; MSKN0001 = 'OVERFLOW' / MSKD0001 = 'Overflow detected
+# during SUR'. Only blank pixels get a reason: a finite pixel with OVERFLOW stays valid.
+planes = ["OVERFLOW"]
+
+[[reasons.category]]
+key = "defect"
+code = 2
+label = "Detector defect (dead, hot or cold pixel)"
+planes = ["NONFUNC", "HOT", "COLD"]
+
+[[reasons.category]]
+key = "transient"
+code = 3
+label = "Transient (cosmic ray or onboard processing error)"
+planes = ["TRANSIENT", "SUR_ERROR"]
+
+[[reasons.category]]
+key = "persistence"
+code = 4
+label = "Persistence from an earlier bright source"
+planes = ["PERSIST"]
+
+[[reasons.category]]
+key = "missing"
+code = 5
+label = "Data lost onboard"
+planes = ["MISSING_DATA"]
+
+[[reasons.category]]
+key = "other_flag"
+code = 6
+label = "Other flag"
+planes = []
+
+[[reasons.category]]
+key = "unexplained"
+code = 8
+label = "Unexplained"
+planes = []
+
+[[reasons.category]]
+key = "not_observed"
+code = 7
+label = "Not observed"
+planes = []

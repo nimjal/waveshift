@@ -28,7 +28,7 @@ import httpx
 import numpy as np
 from astropy.coordinates import SkyCoord
 
-from . import config, cutouts, query, remote, spectral, stack, targets
+from . import config, cutouts, query, reasons, remote, spectral, stack, targets
 from .export import to_jsonable, write_json
 
 log = logging.getLogger(__name__)
@@ -166,6 +166,7 @@ def plan_response(plan: dict, sources: dict, first_batch: int = 2) -> dict:
         "collections": plan["collections"],
         "detectors": plan["detectors"],
         "n_images": plan["n_images"],
+        "reason_table": reasons.load_table(sources).to_json(),
         "epochs": epochs,
         "refine": {"cursor": make_cursor(plan["digest"], 0, 0), "total": total,
                    "slots": plan["slots"], "first_batch": first_batch, "done": total == 0},
@@ -194,31 +195,36 @@ def parse_cursor(cursor: str) -> tuple[str, int, int]:
 TRANSIENT = (remote.Unavailable, remote.DeadlineExceeded, httpx.TransportError)
 
 
-def _frame_path(url: str, plan: dict, bad: list[str]) -> Path:
-    key = json.dumps([url, plan["center"], plan["size_px"], plan["scale"], bad, "v2"])
+def _frame_path(url: str, plan: dict, table: reasons.Table) -> Path:
+    key = json.dumps([url, plan["center"], plan["size_px"], plan["scale"], list(table.bad),
+                      table.to_json(), [c.planes for c in table.categories], "v3"])
     return config.cache_dir() / "frames" / f"{hashlib.sha1(key.encode()).hexdigest()[:24]}.npz"
 
 
-def _fetch_frame(client: httpx.Client, url: str, plan: dict, grid, bad: list[str],
-                 margin: float, deadline: float) -> tuple[np.ndarray, dict | None]:
+def _fetch_frame(client: httpx.Client, url: str, plan: dict, grid, table: reasons.Table,
+                 margin: float, deadline: float) -> tuple[np.ndarray, dict | None, reasons.Reasons]:
     """One exposure -> (background-subtracted frame on the plan grid (NaN = no data),
-    its wavelength plane from spectral.grid_wavelength or None).
+    its wavelength plane from spectral.grid_wavelength or None,
+    its per-pixel reasons (reasons.native -> reasons.frame, exactly as the curated build)).
     Disk-cached as a tiny .npz so a frame fetched after a call's deadline isn't wasted."""
-    path = _frame_path(url, plan, bad)
+    path = _frame_path(url, plan, table)
     try:
-        with np.load(path) as z:
+        with np.load(path, allow_pickle=False) as z:
             w = z["wave"].tolist()
-            return z["frame"].astype(float), ({"wave": w[:3], "bandwidth": w[3]} if len(w) == 4 else None)
+            why = reasons.Reasons(z["codes"].astype(np.uint8), z["names"].astype(object))
+            return (z["frame"].astype(float), ({"wave": w[:3], "bandwidth": w[3]} if len(w) == 4 else None),
+                    why)
     except (OSError, ValueError, KeyError):
         pass
+    bad = list(table.bad)
     center = SkyCoord(*plan["center"], unit="deg")
     size_px, scale = plan["size_px"], plan["scale"]
     half = int(np.ceil(size_px * margin / 2))
     try:
         # ZODI skipped: over a 2.5' window it is a near-constant that background
         # subtraction removes anyway (measured: < 3e-5 of frame rms), and it costs 2 round trips.
-        data, wcs, spec = remote.read_window(client, url, center, half, deadline, bad,
-                                             subtract_zodi=False, wave=True)
+        data, wcs, flags, bits, spec = remote.read_window(client, url, center, half, deadline, bad,
+                                                          subtract_zodi=False, wave=True, with_flags=True)
         wave = _wave_plane(lambda: spectral.grid_wavelength(spec[0], spec[1], wcs, grid, size_px) if spec else None)
     except remote.UnsupportedLayout as e:
         log.info("range read unsupported (%s), using cutout service: %s", e, url)
@@ -230,21 +236,23 @@ def _fetch_frame(client: httpx.Client, url: str, plan: dict, grid, bad: list[str
         if r.status_code in (429, 503):
             raise remote.Unavailable(url)
         r.raise_for_status()
-        data, wcs, _ = stack.load_cutout(io.BytesIO(r.content), bad)
+        data, wcs, _, flags, bits = stack._load(io.BytesIO(r.content), bad, True)
         wave = _wave_plane(lambda: spectral.exposure_wavelength(io.BytesIO(r.content), grid, size_px))
     frame = stack.window_to_grid(data, wcs, grid, size_px)
+    why = stack.window_reasons(data, wcs, flags, bits, frame, grid, size_px, table)
     if wave is None:   # e.g. the spectral table timed out: keep the frame, retry the wavelength next time
-        return frame, None
+        return frame, None, why
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".part.npz")
         w = wave["wave"] + [wave["bandwidth"]]
         with open(tmp, "wb") as fh:
-            np.savez(fh, frame=frame.astype(np.float32), wave=np.array(w, dtype=float))
+            np.savez(fh, frame=frame.astype(np.float32), wave=np.array(w, dtype=float),
+                     codes=why.codes, names=why.names.astype(str))
         tmp.replace(path)
     except OSError as e:
         log.warning("could not cache frame %s: %s", path, e)
-    return frame, wave
+    return frame, wave, why
 
 
 def _wave_plane(compute) -> dict | None:
@@ -278,8 +286,11 @@ def _flip_round(a: np.ndarray, sig: int = 5) -> list[list[float]]:
 def refine(ra: float, dec: float, cursor: str, batch_per_epoch: int, sources: dict,
            budget_s: float = 15.0, workers: int = 6) -> dict:
     """Advance every epoch by up to `batch_per_epoch` slots within ~budget_s.
-    Returns per-epoch DELTAS for the committed slots: per detector a sum image and a
-    per-pixel valid-count image (row 0 = top), plus failures with reason codes."""
+    Returns per-epoch DELTAS for the committed slots: per detector a sum image, a
+    per-pixel valid-count image (row 0 = top) and the merged blank-pixel reasons of this
+    call's exposures (incl. fully masked ones), plus failures with reason codes.
+    The client folds the reason deltas with the same rule as reasons.merge (lower
+    reason_table rank wins, 0 = nothing seen) and shows them where count == 0."""
     t0 = time.monotonic()
     deadline = t0 + budget_s
     digest, depth, stalls = parse_cursor(cursor)
@@ -292,7 +303,7 @@ def refine(ra: float, dec: float, cursor: str, batch_per_epoch: int, sources: di
     stop = min(total, depth + max(1, batch_per_epoch))
     center = SkyCoord(*plan["center"], unit="deg")
     grid = stack.make_grid(center, plan["size_px"], plan["scale"])
-    bad = list(sources.get("flags", {}).get("bad", []))
+    table = reasons.load_table(sources)
     margin = float(sources["cutout"].get("margin", 1.5))
     n_ep = len(plan["epochs"])
 
@@ -302,7 +313,7 @@ def refine(ra: float, dec: float, cursor: str, batch_per_epoch: int, sources: di
     for s in range(depth, stop):                 # round-robin: slot s for every epoch, then s+1
         for e in range(n_ep):
             url = plan["epochs"][e]["exposures"][s]["url"]
-            futs[(s, e)] = pool.submit(_fetch_frame, client, url, plan, grid, bad, margin, deadline)
+            futs[(s, e)] = pool.submit(_fetch_frame, client, url, plan, grid, table, margin, deadline)
     if futs:
         wait(futs.values(), timeout=max(0.0, deadline - time.monotonic()))
 
@@ -313,8 +324,10 @@ def refine(ra: float, dec: float, cursor: str, batch_per_epoch: int, sources: di
             return ("fail", "unavailable") if force else None
         exc = f.exception()
         if exc is None:
-            res = f.result()     # (frame, wave); a bare frame (tests, older code) has no wave
-            return ("ok", res if isinstance(res, tuple) else (res, None))
+            res = f.result()     # (frame, wave, reasons); a bare frame / (frame, wave) (tests) has neither
+            res = res if isinstance(res, tuple) else (res,)
+            frame, wave, why = (*res, None, None)[:3]
+            return ("ok", (frame, wave, why if why is not None else reasons.unknown(frame, table)))
         if isinstance(exc, TRANSIENT) and not force:
             return None
         return ("fail", _reason(exc))
@@ -341,7 +354,9 @@ def refine(ra: float, dec: float, cursor: str, batch_per_epoch: int, sources: di
     for e, ep in enumerate(plan["epochs"]):
         sums: dict[str, np.ndarray] = {}
         counts: dict[str, np.ndarray] = {}
+        why: dict[str, reasons.Reasons | None] = {}
         used: dict[str, int] = {}
+        masked: dict[str, int] = {}
         failed = []
         exposures = []   # per-exposure samples for the on-the-fly spectrum
         for k, row in enumerate(committed):
@@ -352,7 +367,8 @@ def refine(ra: float, dec: float, cursor: str, batch_per_epoch: int, sources: di
             sums.setdefault(det, np.zeros((size, size)))
             counts.setdefault(det, np.zeros((size, size), dtype=int))
             if kind == "ok":
-                val, wave = val
+                val, wave, rs = val
+                why[det] = reasons.merge(why.get(det), rs, table)   # fully masked ones too
                 ok = np.isfinite(val)
                 if ok.any():
                     sums[det][ok] += val[ok]
@@ -361,15 +377,17 @@ def refine(ra: float, dec: float, cursor: str, batch_per_epoch: int, sources: di
                     if wave:
                         exposures.append({"slot": s, "obs_id": exp["obs_id"], "detector": det,
                                           "wave": wave["wave"], "bandwidth": wave["bandwidth"],
-                                          "pixels": to_jsonable(val, sig=4)})
+                                          "pixels": to_jsonable(val, sig=4), **reasons.to_json(rs, table)})
                 else:
+                    masked[det] = masked.get(det, 0) + 1
                     failed.append({"slot": s, "obs_id": exp["obs_id"], "detector": det, "reason": "all_masked"})
             else:
                 failed.append({"slot": s, "obs_id": exp["obs_id"], "detector": det, "reason": val})
         out_epochs.append({
             "id": ep["id"],
             "frames": {d: {"sum": _flip_round(sums[d]), "count": np.flipud(counts[d]).tolist(),
-                           "n_images": used.get(d, 0)} for d in sums},
+                           "n_images": used.get(d, 0), "n_masked": masked.get(d, 0),
+                           **reasons.to_json(why.get(d), table)} for d in sums},
             "failed": failed,
             "exposures": exposures,
         })

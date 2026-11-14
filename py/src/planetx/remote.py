@@ -250,14 +250,16 @@ def _wave_table_locked(rf: RemoteFits, h1: fits.Header, after_off: int, cid: str
 
 def read_window(client: httpx.Client, url: str, coord: SkyCoord, half: int, deadline: float,
                 bad_flags: list[str] | None = None, subtract_zodi: bool = True, wave: bool = False,
-                ) -> tuple:
+                with_flags: bool = False) -> tuple:
     """A (2*half+1)^2 window of IMAGE (- ZODI) centred on `coord`, flagged pixels -> NaN,
     plus its celestial WCS. Same result as load_cutout() on an IRSA cutout of that area.
-    wave=True adds a third item: (window header, spectral.WaveTable) for spectral.wavelength_at
+    with_flags=True adds, right after the WCS, the raw FLAGS window (int64) and its
+    {plane name: bit} map (stack.flag_bits) for reasons.native.
+    wave=True adds a last item: (window header, spectral.WaveTable) for spectral.wavelength_at
     / grid_wavelength (CRPIXjW shifted to the window like CRPIXj), or None if unavailable.
     Raises NoCoverage, UnsupportedLayout, Unavailable, DeadlineExceeded, httpx errors."""
 
-    from .stack import bad_mask
+    from .stack import bad_mask, flag_bits
 
     rf = RemoteFits(client, url, deadline)
     h0, l0, raw = rf.header(0, prefetch=BLOCK * 16)
@@ -289,7 +291,7 @@ def read_window(client: httpx.Client, url: str, coord: SkyCoord, half: int, dead
         if hf.get("EXTNAME") != "FLAGS":
             raise UnsupportedLayout(f"HDU 2 is {hf.get('EXTNAME')!r}, not FLAGS")
         f_flags = ex.submit(_flag_rows, rf, hf, flags_off + lf, headf, lf, y0c, y1c, x0c, x1c) \
-            if bad_flags else None
+            if bad_flags or with_flags else None
         zodi = None
         if subtract_zodi:
             var_off = flags_off + lf + _data_size(hf)
@@ -301,9 +303,13 @@ def read_window(client: httpx.Client, url: str, coord: SkyCoord, half: int, dead
         data = f_img.result()
         if zodi is not None:
             data = data - zodi
+        flags, bits = None, {}
         if f_flags is not None:
             flags, fhdr = f_flags.result()
-            data[bad_mask(flags, fhdr, bad_flags)] = np.nan
+            bits = flag_bits(fhdr)
+            if bad_flags:
+                data[bad_mask(flags, fhdr, bad_flags)] = np.nan
+            flags = np.asarray(flags, np.int64)
 
     win = h1.copy()
     win["NAXIS1"], win["NAXIS2"] = x1c - x0c + 1, y1c - y0c + 1
@@ -316,8 +322,9 @@ def read_window(client: httpx.Client, url: str, coord: SkyCoord, half: int, dead
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", FITSFixedWarning)
         wcs = WCS(win).celestial
+    head = (data, wcs, flags, bits) if with_flags else (data, wcs)
     if not wave:
-        return data, wcs
+        return head
     spec = None
     if "CTYPE1W" in h1:
         try:
@@ -325,4 +332,4 @@ def read_window(client: httpx.Client, url: str, coord: SkyCoord, half: int, dead
         except (UnsupportedLayout, ValueError, KeyError, DeadlineExceeded, Unavailable, httpx.HTTPError) as e:
             import logging
             logging.getLogger(__name__).info("no spectral table for %s: %s", url, e)
-    return data, wcs, spec
+    return (*head, spec)

@@ -16,27 +16,7 @@ def to_jsonable(img: np.ndarray, sig: int = 4) -> list[list[float | None]]:
             for row in flipped]
 
 
-SCHEMA_VERSION = 2   # bump when the per-target JSON shape changes (keys the live API cache)
-
-
-def reasons_jsonable(codes: np.ndarray, names: np.ndarray) -> dict:
-    """Blank-pixel reasons in the same orientation as to_jsonable (flipud, row 0 = top).
-    {} if every pixel is valid. Otherwise
-      {'reasons': ['0001100...', ...]   one string per row, one digit (0-3) per pixel,
-       'flags': {'SUR_ERROR': 12, ...}}  flag names behind the code-2 pixels (+ counts),
-                                         omitted if there are none."""
-
-    codes = np.asarray(codes)
-    if not codes.any():
-        return {}
-    out: dict = {"reasons": ["".join(map(str, row)) for row in np.flipud(codes).tolist()]}
-    flagged = [str(n) for n in np.asarray(names)[codes == 2] if n]
-    if flagged:
-        counts: dict[str, int] = {}
-        for n in flagged:
-            counts[n] = counts.get(n, 0) + 1
-        out["flags"] = dict(sorted(counts.items(), key=lambda kv: -kv[1]))
-    return out
+SCHEMA_VERSION = 3   # bump when the per-target JSON shape changes (keys the live API cache)
 
 
 def write_json(path: Path, obj: dict | list) -> None:

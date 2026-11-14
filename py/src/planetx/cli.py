@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from . import config, targets          # tests swap targets.resolve
+from . import config, reasons, targets # tests swap targets.resolve
 from .export import write_json
 from .pipeline import build_target     # tests swap cli.build_target
 
@@ -22,7 +22,7 @@ def build(only: list[str] | None = None) -> None:
     One target failing prints ✗ and continues.
     Then write targets.json (list of {id, name, kind, file: 'targets/<id>.json', n_epochs},
     MERGED with any existing entries, ordered as in targets.toml, unknown ids last) and
-    manifest.json {generated_at, collections, counts} (counts also MERGED, so building one
+    manifest.json {generated_at, collections, counts, reason_table} (counts also MERGED, so building one
     target doesn't drop the others)."""
 
     sources = config.load_sources()
@@ -58,6 +58,7 @@ def build(only: list[str] | None = None) -> None:
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "collections": sources["spherex"]["collections"],
         "counts": counts,
+        "reason_table": reasons.load_table(sources).to_json(),   # same table as every target file
     })
 
 

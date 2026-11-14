@@ -13,14 +13,16 @@ grid:     { size_px, pixel_scale_arcsec, center_ra, center_dec, center_epoch,
             orientation: "north up, east left, row 0 = top" }
 units:    "MJy/sr (background-subtracted)"
 generated_at, collections[], n_images, n_used
+reason_table: { "<code>": { key, label, rank? } }   # see "Blank-pixel reasons"; the web reads labels from here
 detectors: { D1: [lo_um, hi_um], ... }
 epochs: [{
   id: "A", label: "May 2025", mjd_start, mjd_end, year_mid, n_images,
+  n_masked,                          # exposures that loaded but were entirely blank (e.g. fully saturated)
   predicted_px: { x, y },            # where the target should be, screen pixels
   frames: {
-    D1..D6: { n_images, pixels: [[...]], flagged_fraction,
+    D1..D6: { n_images, n_masked, pixels: [[...]], flagged_fraction,
               reasons?: ["0001100...", ...],   # why null pixels are null, see below
-              flags?:   { SUR_ERROR: 12, ... } },
+              other_flags?: { PLANE: [[row, col], ...] } },   # plane behind each other_flag pixel
     ALL:    { ... }                  # median over every detector = default view
   }
 }]
@@ -61,12 +63,14 @@ exposures: [{ epoch, detector, obs_id,
               wave: [l0, dl_dcol, dl_drow],   # um at screen pixel (col,row) = l0 + dl_dcol*(col-o) + dl_drow*(row-o)
               bandwidth,                       # um, at the field centre
               pixels: [[...]],                 # this exposure alone on the grid, row 0 = top, null = blank
-              reasons?: ["0102..."] }]         # same codes as frames (only when something is blank)
+              reasons?: ["0102..."],           # same codes as frames (only when something is blank)
+              other_flags?: { PLANE: [[row, col], ...] } }]
 - wavelength: planetx/spectral.py (WAVE-TAB lookup in each file's WCS-WAVE extension), fitted
   as a plane over the grid (max residual ~1e-6 um).
 
 ## web/public/data/manifest.json
-{ generated_at, collections[], counts: { <id>: { images, used, epochs } } }   # counts merged across partial builds
+{ generated_at, collections[], counts: { <id>: { images, used, epochs } },   # counts merged across partial builds
+  reason_table }                                                            # same as in every target file
 
 ## Rules
 - pixels: row 0 = top (rows already flipped from FITS). null = no data.
@@ -74,25 +78,46 @@ exposures: [{ epoch, detector, obs_id,
 - A detector with no usable data is omitted, not empty.
 - Moving east = moving LEFT on screen.
 
-## Blank-pixel reasons (frames[*].reasons / flags)
-`reasons`: one string per row (row 0 = top, same orientation as `pixels`), one digit per pixel:
+## Blank-pixel reasons (frames[*].reasons / other_flags, reason_table)
+One implementation for curated and live data: `py/src/planetx/reasons.py`. Categories, codes,
+labels, priority and planes live in `py/config/sources.toml` `[reasons]` and are published as
+`reason_table` (`{code: {key, label, rank}}`, rank 0 = highest priority; code 0 = valid has no
+rank). Clients take labels from the table and never hardcode codes, except that **1 = saturated**
+is fixed (motion.py, photometry.py and the web depend on it).
 
-| code | meaning |
-|---|---|
-| 0 | valid (pixel has a value; a flag bit may still be set) |
-| 1 | saturated: a plane listed in sources.toml `[flags].saturated` is set (SPHEREx: `OVERFLOW`, header `MSKN0001` / `MSKD0001 = 'Overflow detected during SUR'`) |
-| 2 | blanked by another flag: the first plane of `[flags].bad` (in config order) that is set. The names behind a frame's code-2 pixels are listed in `flags` with pixel counts. |
-| 3 | no data / reason unknown (outside the exposure footprint, or NaN with no explanatory flag) |
+`reasons`: one string per row (row 0 = top, same orientation as `pixels`), one digit per pixel.
+Current table (priority order):
 
-- Plane names and bits are read from each cutout's FLAGS header (`MSKNnnnn` = name,
-  `MSKMnnnn` = 1<<n, `MSKDnnnn` = description). Nothing is hardcoded.
-- Precedence per native pixel: saturated first, then `bad` in order, then 3.
-- Reprojection: each reason's indicator mask goes through the same bilinear reprojection as the
-  data; a blank output pixel takes the reason of any blank native pixel in its stencil.
-- Stacking: a stacked pixel is blank only if every stacked frame is blank there. If ANY of them
-  is code 1, then 1; else if any is 2, then 2; else 3.
-- `reasons` and `flags` are omitted when the frame has no blank pixels (or no code-2 pixels).
-  A null pixel with no `reasons` (older data) is treated as code 3.
+| code | key | blank because | planes |
+|---|---|---|---|
+| 0 | valid | (pixel has a value; a flag bit may still be set, e.g. OVERFLOW = onset of nonlinearity) | |
+| 1 | saturated | saturated | OVERFLOW (`MSKD0001 = 'Overflow detected during SUR'`) |
+| 2 | defect | dead / hot / cold pixel | NONFUNC, HOT, COLD |
+| 3 | transient | cosmic ray or onboard processing error | TRANSIENT, SUR_ERROR |
+| 4 | persistence | charge left by an earlier bright source | PERSIST |
+| 5 | missing | data lost onboard | MISSING_DATA |
+| 6 | other_flag | a `[flags].bad` plane in no category above; the plane is named in `other_flags` | (none today) |
+| 8 | unexplained | blank, but no mapped plane is set | |
+| 7 | not_observed | no exposure's footprint covered the pixel | |
+
+- Plane names and bits are read from each file's FLAGS header (`MSKNnnnn` = name,
+  `MSKMnnnn` = 1<<n, `MSKDnnnn` = description). Nothing is hardcoded. Informational planes
+  (SOURCE, GHOST*, CROSSTALK, STREAK, ...) are deliberately not mapped: they don't blank pixels,
+  and a pixel blank for another reason that carries one is not caused by it.
+- Native pixel: the highest-priority category whose plane is set; else unexplained.
+- Reprojection: for each reason, an indicator that is NaN on its native pixels goes through the
+  same bilinear reprojection as the data, so it blanks exactly the output pixels the data's NaNs
+  blank. A blank output pixel inside the footprint takes the highest-priority reason among the
+  native pixels in its stencil; outside the footprint it is not_observed. (reproject clamps the
+  outer half pixel to the border pixel, so a stencil never runs off the frame: there is no
+  separate "edge" reason.)
+- Stacking: a stacked pixel is blank only if every exposure is blank there; it takes the
+  highest-priority reason over ALL exposures, **including entirely blank ones** that the
+  median/mean drops (counted in `n_masked`). So an epoch whose exposures are all masked says why
+  (e.g. saturated), never not_observed. not_observed ranks last: one exposure that missed a pixel
+  never hides another exposure's reason.
+- `reasons` / `other_flags` are omitted when the frame has no blank pixels (or no other_flag
+  pixels). A null pixel with no `reasons` (older data) is treated as unexplained.
 
 ## Live API: progressive refinement (custom RA/Dec)
 Stateless: the server never stores progress. The client carries an opaque `cursor` and keeps
@@ -102,7 +127,7 @@ the running sums. (The server caches the plan and finished 25×25 frames under
 ### GET /target?ra=&dec=  → plan (one SIA query, no pixels, ~3-5 s cold, instant when cached)
 Same keys as a target file except `n_used`, plus per-epoch exposures and `refine`:
 ```
-target, grid, units, generated_at, collections[], n_images, detectors
+target, grid, units, generated_at, collections[], n_images, detectors, reason_table
 epochs: [{ id, label, mjd_start, mjd_end, year_mid, n_images, predicted_px,
            exposures: [{ obs_id, detector }] }]    # ordered: index i = slot i, length = refine.total
 refine: { cursor: "<digest>.<depth>.<stalls>", total, slots: ["D6","D5",...], first_batch: 2, done }
@@ -124,13 +149,21 @@ committed (slot s finished in every epoch), so all epochs always stay at the sam
 cursor, depth, total, done, committed (rounds this call; 0 = no progress, back off and retry),
 elapsed_s,
 epochs: [{ id,
-  frames: { D6: { sum: [[...]], count: [[...]], n_images }, ... },   # DELTAS for this call only
+  frames: { D6: { sum: [[...]], count: [[...]], n_images, n_masked,
+                  reasons?: ["..."], other_flags? }, ... },          # DELTAS for this call only
   failed: [{ slot, obs_id, detector, reason }] }]
 ```
 - `sum` / `count`: per-pixel sum of background-subtracted frames and number of valid frames,
   row 0 = top (same orientation as `pixels`). count 0 → sum 0. Never NaN.
 - Client: add each delta to its running sums; pixel = sum / count (null where count is 0).
   `ALL` = all detectors pooled (sum of sums / sum of counts).
+- `reasons` (delta): per pixel, the highest-priority reason over this call's exposures of that
+  detector, fully masked ones included (0 = no blank exposure seen). Fold deltas with the same
+  rule (lower `reason_table` rank wins, 0 = identity; `ALL` folds every detector) and show the
+  folded code where count is 0; a pixel with count 0 and nothing folded is not_observed. This is
+  `reasons.merge` (py) = the same result as the curated stacking rule. `n_masked` = exposures
+  in this delta that were entirely blank (also listed in `failed` as `all_masked`).
+- GET /target carries `reason_table`.
 - So live frames are a **mean**, not the median used by curated builds (a median can't be
   accumulated from deltas). Bad pixels are already masked by FLAGS before summing.
 - `failed[].reason`: `no_coverage` (window outside the image), `all_masked` (every pixel
@@ -138,8 +171,8 @@ epochs: [{ id,
   `bad_file`, `http_NNN`, `error`. A failed exposure still counts towards depth (it is a
   settled slot), so depth stays equal; it just contributes nothing.
 - `exposures` (per epoch): per-exposure samples for the spectrum,
-  `[{ slot, obs_id, detector, wave, bandwidth, pixels }]` (same meaning as the spectrum sidecar;
-  live frames have no `reasons`). Only exposures with usable pixels and a wavelength are listed.
+  `[{ slot, obs_id, detector, wave, bandwidth, pixels, reasons?, other_flags? }]` (same meaning
+  as the spectrum sidecar). Only exposures with usable pixels and a wavelength are listed.
 - Errors: 422 bad input or cursor · 409 plan changed (archive updated): restart from GET
   /target · 502 upstream failure. A failed call changes nothing: retry with the same cursor.
 - Pixels are read with HTTP range requests straight from the IRSA L2 files (IMAGE rows + RICE
