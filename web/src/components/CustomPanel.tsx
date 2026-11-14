@@ -279,7 +279,7 @@ export function CustomPanel({ request, initialRa = '', initialDec = '', onSubmit
               key={ex.label}
               type="button"
               disabled={loading}
-              className="cursor-pointer text-primary underline-offset-2 hover:underline disabled:opacity-50"
+              className="cursor-pointer text-foreground underline decoration-muted-foreground/60 underline-offset-2 hover:decoration-foreground disabled:opacity-50"
               onClick={() => {
                 setRaText(ex.ra)
                 setDecText(ex.dec)

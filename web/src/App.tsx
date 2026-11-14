@@ -10,7 +10,6 @@ import { CustomPanel, type CustomRequest, type LiveProgress } from '@/components
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   API_URL,
@@ -87,7 +86,7 @@ function CopyLinkButton() {
     <Button
       size="sm"
       variant="outline"
-      className="ml-auto"
+      className="shrink-0"
       onClick={() => void copyText(window.location.href).then((ok) => setState(ok ? 'copied' : 'failed'))}
       aria-live="polite"
     >
@@ -104,57 +103,141 @@ const NOT_MEASURABLE: Record<NonNullable<Motion['reason']>, string> = {
   no_data: 'the target has no usable data in some epoch',
 }
 
-function RefStar({ m }: { m: Motion }) {
+/** The mark: one star printed at three epochs, in the page's three inks. */
+function Mark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 46 28" className={className} aria-hidden="true">
+      <g className="mark">
+        <circle className="mark-a" cx="14" cy="14" r="10" fill="#22d3ee" />
+        <circle cx="23" cy="14" r="10" fill="#f0519b" />
+        <circle className="mark-c" cx="32" cy="14" r="10" fill="#fbbf24" />
+      </g>
+    </svg>
+  )
+}
+
+const px = (v: number) => `${v.toFixed(2)} px`
+
+function Readout({
+  label,
+  glyph,
+  note,
+  children,
+}: {
+  label: string
+  glyph?: React.ReactNode
+  note?: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex min-w-0 flex-1 basis-36 flex-col gap-1 bg-background px-3 py-3 sm:basis-44 sm:px-4">
+      <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        {glyph}
+        {label}
+      </dt>
+      <dd className="readout-value">{children}</dd>
+      {note && <dd className="text-xs text-muted-foreground">{note}</dd>}
+    </div>
+  )
+}
+
+const GLYPH = {
+  predicted: <span className="inline-block h-3 w-0.5 rounded-full" style={{ background: 'var(--ink-cyan)' }} />,
+  measured: <span className="inline-block size-2 rounded-full bg-foreground" />,
+  reference: <span className="inline-block size-2 rounded-full border border-muted-foreground" />,
+}
+
+/** Measured against predicted on one axis: the cyan bar is the prediction (same ink as the
+ * reticle), the solid dot is the measurement, the hollow dot is the star that shouldn't move. */
+function ShiftScale({ m }: { m: Motion }) {
+  if (!m.measurable || m.measured_px === null) return null
+  const ref = m.null_test?.measurable && m.null_test.measured_px !== null ? m.null_test.measured_px : null
+  const top = Math.max(m.predicted_px, m.measured_px, ref ?? 0) * 1.12
+  if (!Number.isFinite(top) || top <= 0) return null
+  const at = (v: number) => `${Math.min(100, Math.max(0, (100 * v) / top))}%`
+  return (
+    <div className="basis-full bg-background px-3 pt-3 pb-2 sm:px-4" aria-hidden="true">
+      <div className="relative h-5">
+        <div className="absolute inset-x-0 top-1/2 h-px bg-border" />
+        <div className="absolute top-1/2 left-0 h-2.5 w-px -translate-y-1/2 bg-muted-foreground" />
+        <div className="absolute top-1/2 right-0 h-2.5 w-px -translate-y-1/2 bg-muted-foreground" />
+        {ref !== null && (
+          <span
+            className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-muted-foreground bg-background"
+            style={{ left: at(ref) }}
+          />
+        )}
+        <span
+          className="absolute top-1/2 h-5 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full"
+          style={{ left: at(m.predicted_px), background: 'var(--ink-cyan)' }}
+        />
+        <span
+          className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground ring-2 ring-background"
+          style={{ left: at(m.measured_px) }}
+        />
+      </div>
+      <div className="flex justify-between font-mono text-[11px] text-muted-foreground tabular-nums">
+        <span>0</span>
+        <span>{px(top)}</span>
+      </div>
+    </div>
+  )
+}
+
+function MotionReadouts({ m }: { m: Motion }) {
   const nt = m.null_test
-  if (!nt) return null
   return (
     <>
-      {' · '}
-      <span className="text-foreground">
-        reference star{' '}
-        {nt.measurable && nt.measured_px !== null ? (
-          <strong className="tabular-nums">{nt.measured_px.toFixed(2)} px</strong>
-        ) : (
-          <>not measurable ({nt.reason === 'faint' ? 'too faint' : nt.reason?.replace('_', ' ')})</>
-        )}
-      </span>
+      <Readout label="Predicted shift" glyph={GLYPH.predicted} note={`Epoch ${m.from_epoch} to ${m.to_epoch}`}>
+        {px(m.predicted_px)}
+      </Readout>
+      <Readout
+        label="Measured shift"
+        glyph={GLYPH.measured}
+        note={
+          m.measurable && m.measured_px !== null
+            ? `Centroid, ${m.detector ?? 'reddest usable detector'}`
+            : m.reason
+              ? NOT_MEASURABLE[m.reason]
+              : 'no usable detector'
+        }
+      >
+        {m.measurable && m.measured_px !== null ? px(m.measured_px) : <span className="text-lg text-muted-foreground">Not measurable</span>}
+      </Readout>
+      {nt && (
+        <Readout
+          label="Reference star"
+          glyph={GLYPH.reference}
+          note={
+            nt.measurable && nt.measured_px !== null
+              ? 'Should be about 0'
+              : `not measurable (${nt.reason === 'faint' ? 'too faint' : (nt.reason?.replace('_', ' ') ?? 'no data')})`
+          }
+        >
+          {nt.measurable && nt.measured_px !== null ? px(nt.measured_px) : <span className="text-muted-foreground">–</span>}
+        </Readout>
+      )}
+      <ShiftScale m={m} />
     </>
   )
 }
 
-function MotionLine({ m }: { m: Motion }) {
+/** How the shift was measured: the fine print under the readouts. */
+function MotionMethod({ m }: { m: Motion }) {
   const nt = m.null_test
-  const how = (
-    <span className="text-muted-foreground">
+  return (
+    <p>
       Centroid estimate: {m.window_px}×{m.window_px} px window on each epoch's brightest pixel within{' '}
       {m.search.radius_px.toFixed(1)} px of the track, in {m.detector ?? 'the reddest usable detector'}.
       {nt?.measurable && (
         <>
           {' '}
-          The reference star (x {nt.x}, y {nt.y}{nt.detector ? `, ${nt.detector}` : ''}) doesn't move, so its
-          shift should be ~0: a check that the method doesn't invent motion, not the error on the target's shift.
+          The reference star (x {nt.x}, y {nt.y}
+          {nt.detector ? `, ${nt.detector}` : ''}) doesn't move, so its shift should be ~0: a check that the method
+          doesn't invent motion, not the error on the target's shift.
         </>
       )}
-    </span>
-  )
-  return (
-    <span className="text-foreground">
-      {m.measurable && m.measured_px !== null ? (
-        <>
-          Measured shift <strong className="tabular-nums">{m.measured_px.toFixed(2)} px</strong> vs{' '}
-          <strong className="tabular-nums">{m.predicted_px.toFixed(2)} px</strong> predicted ({m.from_epoch}→{m.to_epoch}
-          )<RefStar m={m} />. {how}
-        </>
-      ) : (
-        <>
-          Measured shift: <strong>not measurable</strong>{' '}
-          <span className="text-muted-foreground">
-            ({m.reason ? NOT_MEASURABLE[m.reason] : 'no usable detector'}; {m.predicted_px.toFixed(2)} px predicted)
-          </span>
-          <RefStar m={m} />.
-        </>
-      )}
-    </span>
+    </p>
   )
 }
 
@@ -196,54 +279,75 @@ function TargetHeader({ shown }: { shown: Shown }) {
   const pxPerYr = motionPxPerYear(data)
   const years = data.epochs.length > 1 ? data.epochs[data.epochs.length - 1].year_mid - data.epochs[0].year_mid : 0
   const pmTotal = Math.hypot(t.pmra, t.pmdec)
+  const m = data.motion
 
   return (
-    <CardHeader>
-      <div className="flex flex-wrap items-center gap-2">
-        <CardTitle className="text-xl">{t.name}</CardTitle>
-        <Badge variant="secondary" className="capitalize">
-          {t.kind}
-        </Badge>
-        {source.kind === 'custom' && <Badge variant="outline">live</Badge>}
+    <header className="mb-6 flex flex-col gap-4">
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
+        <div className="min-w-0 flex-1 basis-80">
+          <p className="mb-2 flex flex-wrap items-center gap-2">
+            <Badge variant="secondary" className="capitalize">
+              {t.kind}
+            </Badge>
+            {source.kind === 'custom' && <Badge variant="outline">live</Badge>}
+          </p>
+          <h2 className="display stage-title">{t.name}</h2>
+          <p className="mt-2 font-mono text-xs text-muted-foreground">
+            RA {fmtCoord(data.grid.center_ra)} · Dec {fmtCoord(data.grid.center_dec, true)} (field centre,{' '}
+            {data.grid.center_epoch}) · {data.grid.size_px}×{data.grid.size_px} px at {data.grid.pixel_scale_arcsec}″/px
+          </p>
+        </div>
         <CopyLinkButton />
       </div>
-      <CardDescription className="flex flex-col gap-1">
-        <span className="font-mono text-xs">
-          RA {fmtCoord(data.grid.center_ra)} · Dec {fmtCoord(data.grid.center_dec, true)} (field centre,{' '}
-          {data.grid.center_epoch}) · {data.grid.size_px}×{data.grid.size_px} px at {data.grid.pixel_scale_arcsec}″/px
-        </span>
+
+      {(pmTotal > 0 || m) && (
+        <dl className="flex flex-wrap gap-px overflow-hidden rounded-md border border-border bg-border">
+          {pmTotal > 0 && (
+            <Readout label="Proper motion" note={`${pxPerYr.toFixed(2)} px/yr on this grid`}>
+              {(pmTotal / 1000).toFixed(2)}″/yr
+            </Readout>
+          )}
+          {m ? (
+            <MotionReadouts m={m} />
+          ) : (
+            years > 0 && (
+              <Readout label="Expected shift" glyph={GLYPH.predicted} note={`Across these ${data.epochs.length} epochs`}>
+                ~{(pxPerYr * years).toFixed(1)} px
+              </Readout>
+            )
+          )}
+        </dl>
+      )}
+
+      <div className="flex max-w-[78ch] flex-col gap-1.5 text-sm text-muted-foreground">
         {pmTotal > 0 ? (
-          <span>
-            Proper motion {(pmTotal / 1000).toFixed(2)}″/yr, about{' '}
-            <strong className="text-foreground">{pxPerYr.toFixed(2)} px/yr</strong>
+          <p className="text-foreground">
             {years > 0 && (
               <>
-                {' '}
-                → expect a shift of ~{(pxPerYr * years).toFixed(1)} px across these {data.epochs.length} epochs
+                Expect a shift of ~{(pxPerYr * years).toFixed(1)} px across these {data.epochs.length} epochs.{' '}
               </>
             )}
-            . The cyan reticle marks where it should be in each epoch.
-          </span>
+            The cyan reticle marks where it should be in each epoch.
+          </p>
         ) : (
-          <span>
+          <p className="text-foreground">
             Custom position with no known proper motion: the reticle marks the field centre. Look for anything that
             shifts or changes brightness between epochs.
-          </span>
+          </p>
         )}
-        {data.motion && <MotionLine m={data.motion} />}
+        {m?.measurable && m.measured_px !== null && <MotionMethod m={m} />}
         {coreSaturated(data) && (
-          <span className="flex items-center gap-1.5 text-foreground">
+          <p className="flex items-center gap-1.5 text-foreground">
             <TriangleAlert className="size-4 shrink-0 text-amber-500" />
             Core saturated in near-IR: brightness changes show in the surrounding glow.
-          </span>
+          </p>
         )}
-        <span className="text-xs">
+        <p className="text-xs">
           {data.n_used} of {data.n_images} images used · <StackInfo live={source.kind === 'custom'} /> ·{' '}
-          {data.collections.join(', ') || 'no collections'} · built{' '}
-          {new Date(data.generated_at).toLocaleString()}
-        </span>
-      </CardDescription>
-    </CardHeader>
+          {data.collections.join(', ') || 'no collections'} · built {new Date(data.generated_at).toLocaleString()}
+        </p>
+      </div>
+    </header>
   )
 }
 
@@ -640,16 +744,14 @@ export default function App() {
 
   return (
     <div className="min-h-svh bg-background text-foreground">
-      <header className="masthead">
-        <div className="mx-auto flex max-w-6xl xl:max-w-[88rem] items-center gap-4 px-4 py-3.5">
+      <header className="border-b border-border">
+        <div className="flex items-center gap-3 px-4 py-3 lg:px-6">
+          <Mark className="h-7 w-auto shrink-0" />
           <div className="min-w-0">
-            <h1 className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <span className="masthead-name">Planet X</span>
-              <span className="text-base font-medium">SPHEREx blink comparator</span>
+            <h1 className="flex flex-wrap items-baseline gap-x-3">
+              <span className="display masthead-name">Planet X</span>
+              <span className="text-sm font-medium text-muted-foreground">SPHEREx blink comparator</span>
             </h1>
-            <p className="mt-1 text-sm opacity-80">
-              Flip between observation epochs. Stars stay put; nearby and moving objects jump.
-            </p>
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-1 self-center">
             <Button
@@ -675,11 +777,14 @@ export default function App() {
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-6xl xl:max-w-[88rem] gap-6 px-4 py-6 lg:grid-cols-[340px_1fr]">
-        {/* --- picker --- */}
-        <aside data-tour="picker">
-          <Card>
-            <CardContent>
+      <main className="lg:grid lg:grid-cols-[21rem_minmax(0,1fr)]">
+        {/* --- picker: a rail down the left edge, not a floating card --- */}
+        <aside className="border-b border-border bg-card lg:border-r lg:border-b-0">
+          <div className="lg:sticky lg:top-0 lg:max-h-svh lg:overflow-y-auto">
+            <div className="p-4 lg:p-5" data-tour="picker">
+              <p className="mb-4 text-sm text-pretty text-muted-foreground">
+                Flip between observation epochs. Stars stay put; nearby and moving objects jump.
+              </p>
               <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
                 <TabsList className="mb-4 w-full">
                   <TabsTrigger value="curated">Curated targets</TabsTrigger>
@@ -754,12 +859,13 @@ export default function App() {
                   )}
                 </TabsContent>
               </Tabs>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </aside>
 
         {/* --- viewer --- */}
-        <section className="min-w-0">
+        <section className="min-w-0 px-4 py-6 lg:px-8 lg:py-8">
+          <div className="mx-auto max-w-[80rem]">
           {liveProgress && (
             <div
               role="status"
@@ -827,9 +933,9 @@ export default function App() {
             </div>
           )}
           {shown ? (
-            <Card>
+            <div>
               <TargetHeader shown={shown} />
-              <CardContent>
+              <div>
                 {shown.data.epochs.length === 0 ? (
                   <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-border p-6">
                     <p className="font-medium">No SPHEREx coverage here yet</p>
@@ -855,11 +961,11 @@ export default function App() {
                     aside={skyContext}
                   />
                 )}
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           ) : (
-            <Card>
-              <CardContent className="flex min-h-80 flex-col items-center justify-center gap-3 text-center text-muted-foreground">
+            <div>
+              <div className="flex min-h-80 flex-col items-center justify-center gap-3 rounded-md border border-dashed border-border text-center text-muted-foreground">
                 {customLoading || loadingId ? (
                   <>
                     <Loader2 className="size-8 animate-spin" />
@@ -871,11 +977,11 @@ export default function App() {
                     <p>Pick a curated target or enter coordinates to start blinking.</p>
                   </>
                 )}
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           )}
 
-          <p className="mt-4 text-xs text-muted-foreground">
+          <p className="mt-8 max-w-[90ch] border-t border-border pt-4 text-xs text-muted-foreground">
             Images: NASA SPHEREx via IRSA, background-subtracted and stacked per epoch (median for curated targets, mean
             for live views). Orientation: north up,
             east left. A real mover shifts between epochs along the predicted track; artefacts and variable stars
@@ -895,6 +1001,7 @@ export default function App() {
                 : 'Live views are not available on this site'}
             </p>
           )}
+          </div>
         </section>
       </main>
       {/* the tour points at the player, so it waits until there is something to blink */}

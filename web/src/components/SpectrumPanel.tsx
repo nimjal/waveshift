@@ -288,7 +288,7 @@ export function SpectrumPanel({ data, spectrum, pick, onClose }: Props) {
   }
 
   return (
-    <section className="flex flex-col gap-2 rounded-md border border-border p-3" aria-label="Spectrum">
+    <section className="flex flex-col gap-2 rounded-md border border-border bg-card p-3" aria-label="Spectrum">
       <div className="flex items-start justify-between gap-2">
         <h3 className="text-sm font-medium">Spectrum at {where}</h3>
         <Button size="icon-xs" variant="ghost" aria-label="Close spectrum" onClick={onClose}>

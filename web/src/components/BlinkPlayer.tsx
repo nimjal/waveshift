@@ -451,7 +451,7 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
                 className={cn(
                   'flex-1 cursor-pointer rounded-md border px-2 py-1 text-xs',
                   i === epochIdx
-                    ? 'border-primary bg-primary text-primary-foreground'
+                    ? 'border-foreground bg-foreground text-background'
                     : 'border-border bg-card text-muted-foreground hover:bg-muted',
                 )}
               >
@@ -464,6 +464,26 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
             <ChevronRight />
           </Button>
         </div>
+        {/* the two ways to look, right under the dates they apply to */}
+        {!embed && (
+          <div className="mt-2" data-tour="view">
+            <ToggleGroup
+              type="single"
+              variant="outline"
+              value={mode}
+              onValueChange={(v) => v && setMode(v as ViewMode)}
+              className="w-full"
+              aria-label="View"
+            >
+              <ToggleGroupItem value="blink" className="flex-1">
+                Blink
+              </ToggleGroupItem>
+              <ToggleGroupItem value="diff" className="flex-1">
+                Difference
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+        )}
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
           {spectrum && !pick && (
             <p className="text-xs text-muted-foreground">
@@ -532,25 +552,6 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
       {/* controls */}
       {!embed && (
         <>
-        <div className="flex flex-col gap-2" data-tour="view">
-          <Label>View</Label>
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            value={mode}
-            onValueChange={(v) => v && setMode(v as ViewMode)}
-            className="w-full"
-          >
-            <ToggleGroupItem value="blink" className="flex-1">
-              Blink
-            </ToggleGroupItem>
-            <ToggleGroupItem value="diff" className="flex-1">
-              Difference
-            </ToggleGroupItem>
-          </ToggleGroup>
-        </div>
-
-
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
           <label className="flex cursor-pointer items-center gap-2">
             <Switch checked={showMarker} onCheckedChange={setShowMarker} />

@@ -205,7 +205,7 @@ function TourSteps({ onClose, mode, cycleMs }: Omit<Props, 'open'>) {
             height={target.h + 2 * PAD}
             rx={8}
             fill="none"
-            stroke="#22d3ee"
+            stroke="var(--primary)"
             strokeWidth={2}
           />
         )}

@@ -49,24 +49,31 @@
 }
 
 :root {
-    --background: oklch(0.965 0 0);
-    --foreground: oklch(0.145 0 0);
+    color-scheme: light;
+    /* Three inks, one job each. Cyan = predicted position (reticle, blink field). Amber =
+       catalogue stars and cautions. Magenta (--primary) = the interface: what is selected,
+       the main action, focus. Everything else is ink on paper, tinted a hair toward the
+       magenta so the greys and the accent belong to one family. */
+    --ink-cyan: #0e9fb8;
+    --ink-amber: #d99a06;
+    --background: oklch(0.972 0.004 340);
+    --foreground: oklch(0.18 0.012 340);
     --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
+    --card-foreground: oklch(0.18 0.012 340);
     --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.93 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.94 0 0);
-    --muted-foreground: oklch(0.45 0 0);
-    --accent: oklch(0.94 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0 0 0 / 14%);
-    --input: oklch(0 0 0 / 20%);
-    --ring: oklch(0.45 0 0);
+    --popover-foreground: oklch(0.18 0.012 340);
+    --primary: oklch(0.56 0.235 352);
+    --primary-foreground: oklch(0.99 0 0);
+    --secondary: oklch(0.935 0.006 340);
+    --secondary-foreground: oklch(0.22 0.012 340);
+    --muted: oklch(0.945 0.005 340);
+    --muted-foreground: oklch(0.46 0.012 340);
+    --accent: oklch(0.945 0.005 340);
+    --accent-foreground: oklch(0.22 0.012 340);
+    --destructive: oklch(0.55 0.22 30);
+    --border: oklch(0.2 0.02 340 / 13%);
+    --input: oklch(0.2 0.02 340 / 22%);
+    --ring: oklch(0.56 0.235 352);
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
@@ -95,24 +102,27 @@
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-3: #199e70;
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.985 0 0);
-    --primary-foreground: oklch(0.145 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.708 0 0);
+    color-scheme: dark;
+    --ink-cyan: #22d3ee;
+    --ink-amber: #fbbf24;
+    --background: oklch(0.15 0.006 340);
+    --foreground: oklch(0.97 0.004 340);
+    --card: oklch(0.195 0.008 340);
+    --card-foreground: oklch(0.97 0.004 340);
+    --popover: oklch(0.215 0.009 340);
+    --popover-foreground: oklch(0.97 0.004 340);
+    --primary: oklch(0.72 0.2 352);
+    --primary-foreground: oklch(0.17 0.03 352);
+    --secondary: oklch(0.27 0.01 340);
+    --secondary-foreground: oklch(0.97 0.004 340);
+    --muted: oklch(0.265 0.01 340);
+    --muted-foreground: oklch(0.72 0.012 340);
+    --accent: oklch(0.265 0.01 340);
+    --accent-foreground: oklch(0.97 0.004 340);
+    --destructive: oklch(0.72 0.17 35);
+    --border: oklch(1 0 0 / 11%);
+    --input: oklch(1 0 0 / 17%);
+    --ring: oklch(0.72 0.2 352);
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
@@ -143,12 +153,9 @@
     }
 }
 /* --- identity ------------------------------------------------------------------------
-   The interface is ink: black, white and greys in both modes. Every colour on the page is
-   data (cyan reticle, amber Gaia rings and warnings, chart series, blank-pixel reasons), so
-   nothing in the chrome can be mistaken for a measurement. The one loud thing is the
-   masthead, printed in reverse: a white band in dark mode, a black band in light mode
-   (?embed=1 never renders it). Headings use Archivo at expanded width, which reads like
-   engraved instrument lettering; the working UI stays in Geist. Self-hosted, SIL OFL. */
+   Headings use Archivo at expanded width (engraved instrument lettering); the working UI
+   stays in Geist. Self-hosted, SIL OFL. Layout: a target rail and an open stage; only the
+   images and charts are boxed. */
 @font-face {
   font-family: 'Archivo Variable';
   font-style: normal;
@@ -158,45 +165,54 @@
   src: url('./assets/fonts/archivo-latin-wdth-normal.woff2') format('woff2-variations');
 }
 
-[data-slot='card-title'] {
-  font-stretch: 118%;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-}
-
-.masthead {
-  background: var(--foreground);
-  color: var(--background);
+.display {
+  font-family: var(--font-heading);
+  font-stretch: 122%;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.02;
 }
 .masthead-name {
-  font-family: var(--font-heading);
-  font-stretch: 125%;
+  font-size: clamp(1.5rem, 1.15rem + 1.3vw, 2rem);
   font-weight: 900;
-  font-size: clamp(1.625rem, 1.2rem + 1.6vw, 2.25rem);
-  line-height: 1;
-  letter-spacing: -0.035em;
+  font-stretch: 125%;
 }
-/* controls on yellow: dark ink, and a focus ring that is visible against the band */
-.masthead a,
-.masthead button {
-  color: inherit;
+.stage-title {
+  font-size: clamp(1.875rem, 1.2rem + 2.6vw, 3.25rem);
+  text-wrap: balance;
 }
-.masthead a:hover,
-.masthead button:hover {
-  background: color-mix(in oklch, currentColor 14%, transparent);
-  color: inherit;
-}
-.masthead a:focus-visible,
-.masthead button:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 2px;
-  box-shadow: none;
-  border-color: transparent;
+.readout-value {
+  font-family: var(--font-heading);
+  font-stretch: 112%;
+  font-weight: 700;
+  font-size: clamp(1.375rem, 1.1rem + 0.9vw, 1.875rem);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
 }
 
+/* The mark: one star printed at three epochs in the three inks. On load the discs start
+   stacked and slide apart once; that is the page's only decorative motion. */
+.mark circle {
+  mix-blend-mode: multiply;
+  transform-box: fill-box;
+}
+.dark .mark circle {
+  mix-blend-mode: screen;
+}
+.mark {
+  isolation: isolate;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .mark .mark-a { animation: mark-a 900ms 250ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+  .mark .mark-c { animation: mark-c 900ms 250ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+}
+@keyframes mark-a { from { transform: translateX(9px); } }
+@keyframes mark-c { from { transform: translateX(-9px); } }
+
 ::selection {
-  background: var(--foreground);
-  color: var(--background);
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 
 @keyframes indeterminate {

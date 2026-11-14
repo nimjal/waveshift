@@ -27,7 +27,9 @@ export function CuratedList({ targets, selectedId, loadingId, onSelect }: Props)
               aria-current={selected ? 'true' : undefined}
               className={cn(
                 'flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors',
-                selected ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted',
+                selected
+                  ? 'border-primary/50 bg-primary/10 shadow-[inset_3px_0_0_var(--primary)]'
+                  : 'border-border hover:bg-muted',
               )}
             >
               <span className="flex min-w-0 flex-col">
