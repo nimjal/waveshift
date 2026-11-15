@@ -259,7 +259,7 @@ git-ignored). Last full run (2026-11-14, `RUN_LIVE = True`, ~4 min): 96 of 96 pa
 
 ## Use of AI
 
-The frontend, API wiring and much of the implementation were built with Claude Code assisting. The data layer (planetx, including remote.py and the spectral wavelength code) was reviewed, verified against IRSA's cutout service and notebook tests, and written by hand. No AI-generated images, logos or NASA branding are used.
+The frontend, and some of the API wiring was assisted with Claude Code. The data layer (planetx, including remote.py and the spectral wavelength code) was reviewed, verified against IRSA's cutout service and notebook tests, and written by hand. No AI-generated images, logos or NASA branding are used.
 
 ## License
 
