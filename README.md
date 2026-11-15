@@ -4,7 +4,7 @@ Enter any RA/Dec and get a time-lapse of NASA SPHEREx sky images across observat
 objects that move or change brightness, like nearby stars and brown dwarfs, stand out against the fixed background.
 
 - **Live demo:** https://waveshift-4billion.vercel.app
-- **Demo video:** `TODO: video URL`
+- **Demo video:** https://www.youtube.com/watch?v=7_vH4XtEZgM
 - **Repo:** https://github.com/nimjal/waveshift
 
 ## What it does
