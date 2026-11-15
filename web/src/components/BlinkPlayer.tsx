@@ -1,5 +1,5 @@
 import { type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronLeft, ChevronRight, Crosshair, Download, LineChart, Loader2, Pause, Play, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Crosshair, Download, ExternalLink, Flag, LineChart, Link2, Loader2, Pause, Play, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -13,7 +13,9 @@ import { LightCurvePanel } from '@/components/LightCurvePanel'
 import { SpectrumPanel } from '@/components/SpectrumPanel'
 import type { Pick } from '@/lib/spectrum'
 import type { SpectrumData, TargetData } from '@/lib/types'
-import { DEFAULT_DISPLAY, type DisplayState } from '@/lib/url'
+import { pixelToSky } from '@/lib/coords'
+import { candidateReportUrl, SIMBAD_RADIUS_ARCMIN, simbadUrl } from '@/lib/report'
+import { copyText, DEFAULT_DISPLAY, type DisplayState, type PickState } from '@/lib/url'
 import { cn } from '@/lib/utils'
 
 /** CSS pixels per sky pixel at full size (25 px grid → 500 px canvas). */
@@ -180,6 +182,8 @@ interface Props {
   embed?: boolean
   /** shown beside the canvas on wide screens and under it otherwise (the sky-context panel) */
   aside?: ReactNode
+  /** absolute link to this exact view (target or position, detector, view, stretch, marked pixel) */
+  viewUrl?: string
 }
 
 /** GIF export: sky pixel -> 14 px, so a 25 px grid is a 350 px square (small file, still legible). */
@@ -267,7 +271,7 @@ function drawPick(ctx: CanvasRenderingContext2D, data: TargetData, epochIdx: num
   ctx.restore()
 }
 
-export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrumProp, embed = false, aside }: Props) {
+export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrumProp, embed = false, aside, viewUrl }: Props) {
   const spectrum = embed ? undefined : spectrumProp
   const frameKeys = useMemo(() => availableFrameKeys(data), [data])
   const nEpochs = data.epochs.length
@@ -298,13 +302,47 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
   }, [data, centroids])
   // "More controls" starts open when the link asks for a non-default detector or stretch
   const [showMore, setShowMore] = useState(() => display.det !== DEFAULT_DISPLAY.det || display.stretch !== DEFAULT_DISPLAY.stretch)
-  const [pick, setPick] = useState<Pick | null>(null)
-  const [loaded, setLoaded] = useState<SpectrumData | null | 'loading' | 'error'>(null)
+  // The marked pixel lives in the display state (so it is in the URL and a shared link points
+  // at one object). 'target' follows the predicted position; a pixel off this grid is ignored.
+  const hasSpectrum = !!spectrum
+  const pick = useMemo<Pick | null>(() => {
+    const p = display.pick
+    if (!p || !hasSpectrum) return null
+    if (p === 'target') {
+      const t = data.epochs[0]?.predicted_px
+      return t ? { r: Math.round(t.y), c: Math.round(t.x), follow: true } : null
+    }
+    return p.r < data.grid.size_px && p.c < data.grid.size_px ? { r: p.r, c: p.c, follow: false } : null
+  }, [display.pick, data, hasSpectrum])
+  const setPick = (p: PickState | null) => onDisplayChange({ ...display, pick: p })
+  /** null = not asked for yet; 'none' = this build has no samples file for the target */
+  const [loaded, setLoaded] = useState<SpectrumData | null | 'none' | 'error'>(null)
+  // curated targets: fetch the per-exposure samples once a pixel is marked (by a click or by the
+  // link). loadCuratedSpectrum caches its promise, so a re-run of this effect costs nothing.
+  const loadSpectrum = spectrum && 'load' in spectrum ? spectrum.load : null
+  const wantLoad = !!pick && !!loadSpectrum && loaded === null
+  useEffect(() => {
+    if (!wantLoad || !loadSpectrum) return
+    let stale = false
+    loadSpectrum().then(
+      (d) => !stale && setLoaded(d ?? 'none'),
+      () => !stale && setLoaded('error'),
+    )
+    return () => {
+      stale = true
+    }
+  }, [wantLoad, loadSpectrum])
+  const [linkCopied, setLinkCopied] = useState<'idle' | 'copied' | 'failed'>('idle')
+  useEffect(() => {
+    if (linkCopied === 'idle') return
+    const t = window.setTimeout(() => setLinkCopied('idle'), 2000)
+    return () => window.clearTimeout(t)
+  }, [linkCopied])
   // light curve: open by default for variable stars, on request for anything else
   const [showLc, setShowLc] = useState(() => !embed && /variable/i.test(data.target.kind))
   const [gif, setGif] = useState<'idle' | 'working' | 'error' | number>('idle')
   const onGif = () => setGif('working')
-  const spectrumData = spectrum && 'live' in spectrum ? spectrum.live : loaded
+  const spectrumData = spectrum && 'live' in spectrum ? spectrum.live : wantLoad ? 'loading' : loaded === 'none' ? null : loaded
 
   // A requested detector this target doesn't have (yet: live views fetch D6/D5 first) is
   // shown as the default instead; the request is kept, so it applies once it arrives.
@@ -434,15 +472,16 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
     const p = data.epochs[epochIdx].predicted_px
     const moves = data.target.pmra !== 0 || data.target.pmdec !== 0
     const follow = moves && Math.hypot(fx - p.x, fy - p.y) <= 1.5
-    setPick({ r, c, follow })
-    if (spectrum && 'load' in spectrum && (loaded === null || loaded === 'error')) {
-      setLoaded('loading')
-      spectrum.load().then(
-        (d) => setLoaded(d),
-        () => setLoaded('error'),
-      )
-    }
+    setPick(follow ? 'target' : { c, r })
+    if (loaded === 'error') setLoaded(null) // a new click retries a failed download
   }
+
+  // "Spotted a mover?": where the marked pixel is on the sky, for the catalogue check and the report.
+  // Following the target = the grid centre (the target's position at the grid epoch).
+  const mid = (data.grid.size_px - 1) / 2
+  const pickSky = pick ? pixelToSky(data.grid, pick.follow ? mid : pick.c, pick.follow ? mid : pick.r) : null
+  const pickLabel = pick ? (pick.follow ? 'the target' : `pixel x ${pick.c}, y ${pick.r}`) : ''
+  const fmtDeg = (v: number, signed = false) => `${signed && v >= 0 ? '+' : ''}${v.toFixed(5)}°`
 
   let hoverText: string | null = null
   if (hover && frame) {
@@ -565,6 +604,68 @@ export function BlinkPlayer({ data, display, onDisplayChange, spectrum: spectrum
             </div>
           )}
         </div>
+        {!embed && spectrum && nEpochs > 1 && (
+          <div className="mt-2 flex flex-col gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs" data-report>
+            {!pick || !pickSky ? (
+              <p className="text-muted-foreground">
+                <span className="font-medium text-foreground">Spotted a mover?</span> Click it to mark the pixel, then copy
+                the link and check it against SIMBAD / Gaia.
+              </p>
+            ) : (
+              <>
+                <p className="text-muted-foreground">
+                  <span className="font-medium text-foreground">Spotted a mover?</span> Marked {pickLabel} ·{' '}
+                  <span className="font-mono text-foreground">
+                    RA {fmtDeg(pickSky.ra)} · Dec {fmtDeg(pickSky.dec, true)}
+                  </span>
+                </p>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {viewUrl && (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      aria-live="polite"
+                      onClick={() => void copyText(viewUrl).then((ok) => setLinkCopied(ok ? 'copied' : 'failed'))}
+                    >
+                      {linkCopied === 'copied' ? <Check /> : <Link2 />}
+                      {linkCopied === 'copied' ? 'Copied' : linkCopied === 'failed' ? 'Copy failed' : 'Copy link'}
+                    </Button>
+                  )}
+                  <Button size="xs" variant="outline" asChild>
+                    <a href={simbadUrl(pickSky.ra, pickSky.dec)} target="_blank" rel="noopener noreferrer">
+                      Check SIMBAD <ExternalLink />
+                    </a>
+                  </Button>
+                  {viewUrl && (
+                    <Button size="xs" variant="outline" asChild>
+                      <a
+                        href={candidateReportUrl({
+                          viewUrl,
+                          ra: pickSky.ra,
+                          dec: pickSky.dec,
+                          pixel: pick.follow ? 'target (reticle)' : `x ${pick.c}, y ${pick.r}`,
+                          field: data.target.name,
+                          detector: frameKey,
+                          epochs: data.epochs.map((e) => e.label).join(', '),
+                        })}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Opens a pre-filled report on GitHub (needs a GitHub account)"
+                      >
+                        <Flag /> Candidate report
+                      </a>
+                    </Button>
+                  )}
+                </div>
+                <p className="text-muted-foreground">
+                  SIMBAD lists positions for the year 2000, so the search is {SIMBAD_RADIUS_ARCMIN}′ wide: a known fast
+                  mover shows up a few arcminutes away, with a large proper motion. Gaia DR3 sources are in the Sky
+                  context panel.
+                </p>
+              </>
+            )}
+          </div>
+        )}
         {nEpochs < 2 && (
           <p className="mt-2 text-sm text-muted-foreground">
             Only one epoch has data here, so there's nothing to blink against yet.

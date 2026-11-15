@@ -40,3 +40,23 @@ export function parseDec(text: string): number {
   if (!sx) return NaN
   return sx.sign * sx.value
 }
+
+/** Sky position (degrees, ICRS) of a screen pixel on the blink grid: a tangent-plane (TAN)
+ * projection centred on the middle pixel, north up, east left, row 0 = top
+ * (planetx/stack.py make_grid). Sub-pixel x / y are allowed. */
+export function pixelToSky(
+  grid: { size_px: number; pixel_scale_arcsec: number; center_ra: number; center_dec: number },
+  x: number,
+  y: number,
+): { ra: number; dec: number } {
+  const rad = Math.PI / 180
+  const o = (grid.size_px - 1) / 2
+  const step = (grid.pixel_scale_arcsec / 3600) * rad
+  const xi = -(x - o) * step // east is to the left
+  const eta = (o - y) * step // north is up
+  const d0 = grid.center_dec * rad
+  const den = Math.cos(d0) - eta * Math.sin(d0)
+  const ra = grid.center_ra + Math.atan2(xi, den) / rad
+  const dec = Math.atan2(Math.sin(d0) + eta * Math.cos(d0), Math.hypot(xi, den)) / rad
+  return { ra: ((ra % 360) + 360) % 360, dec }
+}

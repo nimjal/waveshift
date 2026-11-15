@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   API_URL,
   ApiError,
+  checkApiHealth,
   fetchLivePlan,
   loadCuratedIndex,
   loadCuratedSpectrum,
@@ -25,6 +26,7 @@ import {
 } from '@/lib/api'
 import { describeFailures, LiveStack } from '@/lib/live'
 import { coreSaturated, motionPxPerYear } from '@/lib/render'
+import { REPO_URL } from '@/lib/report'
 import type { DataSource, Motion, SpectrumData, TargetData, TargetIndexEntry } from '@/lib/types'
 import { guideSeen } from '@/lib/prefs'
 import { applyTheme, currentTheme, type Theme } from '@/lib/theme'
@@ -48,8 +50,6 @@ interface Shown {
 function fmtCoord(v: number, signed = false): string {
   return `${signed && v >= 0 ? '+' : ''}${v.toFixed(4)}°`
 }
-
-const REPO_URL = 'https://github.com/nimjal/waveshift'
 
 /** GitHub mark (Octicons mark-github, MIT); lucide no longer ships brand icons. */
 function GitHubMark({ className }: { className?: string }) {
@@ -384,6 +384,12 @@ export default function App() {
     setTheme(next)
   }
 
+  // Wake the API as soon as the page opens (a serverless cold start takes several seconds), so
+  // it is ready by the time someone types coordinates. Fire and forget: checkApiHealth never throws.
+  useEffect(() => {
+    void checkApiHealth()
+  }, [])
+
   const abortRef = useRef<AbortController | null>(null)
   /** the live session (plan + running sums + cursor) so Stop can be resumed */
   const liveRef = useRef<{ stack: LiveStack; ra: number; dec: number } | null>(null)
@@ -485,7 +491,22 @@ export default function App() {
     }
     const newStack = async () => {
       setCustomReq({ status: 'planning', ra, dec, startedAt })
-      const plan = await fetchLivePlan(ra, dec, ctrl.signal)
+      // The archive's image search sometimes answers 502 for a few seconds: try again before
+      // giving up, but only while the whole attempt is still quick (the API has already retried
+      // on its side), so a real outage shows its error after about 15 s, not a minute.
+      const planStarted = Date.now()
+      let plan
+      for (let attempt = 0; ; attempt++) {
+        try {
+          plan = await fetchLivePlan(ra, dec, ctrl.signal)
+          break
+        } catch (e) {
+          const retry = e instanceof ApiError && (e.kind === 'upstream' || e.kind === 'timeout' || e.kind === 'network')
+          if (!retry || attempt >= 2 || ctrl.signal.aborted || Date.now() - planStarted > 15000) throw e
+          await sleep(2000 * (attempt + 1))
+          if (ctrl.signal.aborted) throw new ApiError('aborted', 'Request cancelled.')
+        }
+      }
       const st = new LiveStack(plan)
       liveRef.current = { stack: st, ra, dec }
       return st
@@ -597,6 +618,15 @@ export default function App() {
   /** set while Back/Forward restores a view: the URL is already right, so don't write
    * (a write before the restored target arrives would push and wipe Forward history) */
   const restoringTo = useRef<DataSource | null>(null)
+  // A marked pixel belongs to the field it was marked in: drop it when another target or
+  // position is shown. Not on the landing view, and not when Back/Forward restores a link: then
+  // the address bar already names the new source (a fresh choice still shows the old one here).
+  const [pickSource, setPickSource] = useState<DataSource | null>(shownSource)
+  if (!sameSource(pickSource, shownSource)) {
+    setPickSource(shownSource)
+    const restored = sameSource(readUrl(window.location).source, shownSource)
+    if (pickSource && display.pick && !restored) setDisplay({ ...display, pick: null })
+  }
   useEffect(() => {
     if (!shownSource) return
     if (restoringTo.current) {
@@ -959,6 +989,7 @@ export default function App() {
                     }}
                     spectrum={shown.spectrum}
                     aside={skyContext}
+                    viewUrl={`${window.location.origin}${window.location.pathname}${toSearch(shown.source, display)}`}
                   />
                 )}
               </div>

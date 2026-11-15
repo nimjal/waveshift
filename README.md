@@ -60,11 +60,19 @@ objects that move or change brightness, like nearby stars and brown dwarfs, stan
   (`GET /resolve`): curated aliases first, then CDS Sesame. The position is moved by its proper
   motion to the grid epoch (2025.9) before the live query starts.
 - **Shareable links:** the URL holds the view: `?target=<id>` or `?ra=<deg>&dec=<deg>`, plus
-  optional `&det=ALL|D1…D6`, `&view=blink|diff`, `&stretch=linear|sqrt|asinh`. Opening a link
+  optional `&det=ALL|D1…D6`, `&view=blink|diff`, `&stretch=linear|sqrt|asinh`, and
+  `&px=<col>,<row>` (or `&px=target`) for the pixel the visitor marked. Opening a link
   restores the view (custom coordinates start the live query automatically); invalid parameters
   fall back to defaults with a notice. A new target pushes a history entry (Back/Forward work);
   detector/view/stretch changes replace it. **Copy link** copies the current URL. Old
   `#target=…` links still work.
+- **Spotted a mover?** Clicking a pixel marks it (it goes into the link as `&px=`), and a row under
+  the viewer gives its RA/Dec (`pixelToSky` in `web/src/lib/coords.ts`, the grid's TAN projection)
+  with three actions: **Copy link**, **Check SIMBAD** (a 5′ coordinate search on the Harvard
+  mirror; SIMBAD positions are for epoch 2000, so the radius has to cover a fast mover's motion
+  since then) and **Candidate report**, which opens the GitHub issue form
+  `.github/ISSUE_TEMPLATE/candidate-report.yml` with the view link, position, detector and visit
+  dates pre-filled. Picking another target clears the mark.
 - **Embed:** add `&embed=1` to any link to get only the player (blink/difference, epoch labels,
   compass, scale bar) and a small "Open in Waveshift" link, for an `<iframe>`. All other link
   parameters still apply; a bad parameter shows a one-line notice instead of a silent fallback.
@@ -86,6 +94,11 @@ objects that move or change brightness, like nearby stars and brown dwarfs, stan
   the text is a sheet at the bottom of the screen. Detector, stretch, blink speed and the
   per-epoch numbers sit under **More controls**, folded by default. Under the player, a freshness line gives the curated build date
   from `manifest.json` and the IRSA collections live views query.
+
+**When the archive or the API is slow:** the page pings `GET /health` as soon as it opens, so a
+sleeping API is awake before anyone types coordinates. IRSA's image search sometimes answers 502
+for a few seconds: the API tries each collection up to 3 times (`SIA_RETRY_WAITS` in
+`py/src/planetx/query.py`) and the page retries a failed plan request twice before showing an error.
 
 **When the API is unreachable:** curated targets keep working because they are static files. The
 "Custom RA/Dec" tab checks `GET /health` and shows "Server not responding". Submitting a position

@@ -18,6 +18,9 @@ KEEP = ["obs_id", "access_url", "energy_bandpassname", "t_min", "t_max",
 STR_COLS = {"obs_id", "access_url", "energy_bandpassname", "dataproduct_subtype", "obs_collection"}
 
 
+SIA_RETRY_WAITS = (1.0, 2.5)   # seconds before the 2nd and 3rd attempt of an image search
+
+
 def detector_of(bandpass: str) -> str:
     """'SPHEREx-D3' -> 'D3'."""
     return str(bandpass).rsplit("-", 1)[-1]
@@ -57,15 +60,17 @@ def find_images(coord: SkyCoord, collections: list[str],
     from astroquery.ipac.irsa import Irsa
 
     def one(coll: str):
-        for attempt in range(2):  # IRSA occasionally drops a connection; retry once
+        # IRSA's SIA service sometimes drops a connection or answers 502 for a few seconds
+        # (seen 15 Nov 2026): retry with a short backoff before failing the whole query.
+        for attempt in range(len(SIA_RETRY_WAITS) + 1):
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     return Irsa.query_sia(pos=(coord, radius), collection=coll)
             except Exception:  # noqa: BLE001
-                if attempt:
+                if attempt == len(SIA_RETRY_WAITS):
                     raise
-                time.sleep(1.0)
+                time.sleep(SIA_RETRY_WAITS[attempt])
 
     # collections in parallel: the slowest one sets the latency, not the sum
     with ThreadPoolExecutor(max_workers=max(1, len(collections))) as ex:

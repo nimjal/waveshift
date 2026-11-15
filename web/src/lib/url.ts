@@ -2,6 +2,7 @@
 //   ?target=<id>                curated target
 //   ?ra=<deg>&dec=<deg>         custom position (starts a live query when opened)
 //   &det=ALL|D1..D6  &view=blink|diff  &stretch=linear|sqrt|asinh   (optional)
+//   &px=<col>,<row> | &px=target   the marked pixel (its spectrum opens); `target` follows the reticle
 //   &embed=1                    player only (for an <iframe>); kept when the view changes
 // Older links used the hash (#target=… / #ra=…&dec=…); those are still read.
 // Parsing never throws: anything unusable is dropped and reported in `problems`, so a bad
@@ -14,13 +15,19 @@ import type { DataSource } from './types'
 
 export type UrlSource = DataSource
 
+/** The marked pixel (screen coords: c = column from the left, r = row from the top), or the
+ * target itself: 'target' follows the predicted position from epoch to epoch. */
+export type PickState = { c: number; r: number } | 'target'
+
 export interface DisplayState {
   det: string
   mode: ViewMode
   stretch: Stretch
+  /** the pixel the visitor marked, so a shared link points at one object, not the whole field */
+  pick: PickState | null
 }
 
-export const DEFAULT_DISPLAY: DisplayState = { det: 'ALL', mode: 'blink', stretch: 'asinh' }
+export const DEFAULT_DISPLAY: DisplayState = { det: 'ALL', mode: 'blink', stretch: 'asinh', pick: null }
 
 export interface UrlState {
   source: UrlSource | null
@@ -82,6 +89,13 @@ export function readUrl(loc: Pick<Location, 'search' | 'hash'> = window.location
     if ((STRETCHES as readonly string[]).includes(stretch)) display.stretch = stretch as Stretch
     else problems.push(`unknown stretch "${stretch.slice(0, 20)}"`)
   }
+  const px = q.get('px')
+  if (px !== null) {
+    const m = /^(\d{1,3}),(\d{1,3})$/.exec(px)
+    if (px === 'target') display.pick = 'target'
+    else if (m) display.pick = { c: Number(m[1]), r: Number(m[2]) }
+    else problems.push(`unknown pixel "${px.slice(0, 20)}"`)
+  }
   return { source, display, problems, embed: q.get('embed') === '1' }
 }
 
@@ -101,8 +115,10 @@ export function toSearch(source: UrlSource | null, display: DisplayState, embed 
   if (display.det !== DEFAULT_DISPLAY.det) q.set('det', display.det)
   if (display.mode !== DEFAULT_DISPLAY.mode) q.set('view', display.mode)
   if (display.stretch !== DEFAULT_DISPLAY.stretch) q.set('stretch', display.stretch)
+  if (display.pick) q.set('px', display.pick === 'target' ? 'target' : `${display.pick.c},${display.pick.r}`)
   if (embed) q.set('embed', '1')
-  const s = q.toString()
+  // keep the comma of px readable; it is safe unescaped in a query string
+  const s = q.toString().replace(/%2C/g, ',')
   return s ? `?${s}` : ''
 }
 

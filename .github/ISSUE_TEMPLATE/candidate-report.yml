@@ -1,0 +1,61 @@
+name: Candidate report
+description: Something in a Waveshift view that moves or changes brightness and isn't the listed target.
+title: "Candidate: "
+labels: ["candidate"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for looking. Use the **Candidate report** button in the viewer and the first three fields arrive filled in.
+        A report is a pointer for someone to follow up, not a discovery claim: most candidates turn out to be known objects or artefacts, and that is a useful result too.
+  - type: input
+    id: view-link
+    attributes:
+      label: View link
+      description: The Waveshift link with the pixel marked (Copy link in the viewer).
+      placeholder: https://waveshift-4billion.vercel.app/?ra=…&dec=…&px=14,9
+    validations:
+      required: true
+  - type: input
+    id: position
+    attributes:
+      label: Position
+      description: RA / Dec of the marked pixel. One pixel is 6.15″ across.
+    validations:
+      required: true
+  - type: input
+    id: view
+    attributes:
+      label: Field, detector and visits
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What did you see?
+      options:
+        - It moves between visits
+        - It changes brightness
+        - It appears or disappears
+        - Something else
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Quick checks
+      description: Tick what you checked. None are required, but each one rules out a common false alarm.
+      options:
+        - label: It shows in more than one detector (D1–D6), not only in one.
+        - label: It is not next to hatched (blank) pixels; hovering them says "saturated", "detector defect" or "cosmic ray".
+        - label: The Difference view shows a pair, amber where it is now and blue where it was (a mover), or one colour at a fixed spot (a variable).
+        - label: I looked it up in SIMBAD (Check SIMBAD button; positions there are for the year 2000, so a fast mover is listed a few arcminutes away).
+        - label: I compared it with the Gaia DR3 sources in the Sky context panel.
+  - type: textarea
+    id: catalogue
+    attributes:
+      label: Catalogue match
+      description: The closest SIMBAD or Gaia object, if there is one, and its proper motion.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything else. A GIF from Download GIF helps.
